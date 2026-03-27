@@ -52,7 +52,7 @@ Ts     = 0.02     # simulation timestep (s)
 T      = 0.7      # simulation horizon (s) — ball lands in ~0.58s at max speed
 lc     = 0.5      # cost lengthscale / success radius (m)
 lm     = 0.75     # min target distance (m)
-lM     = 2.4      # max target distance (m)
+lM     = 1.75     # max target distance (m) — paper's value; 2.4 was beyond reachable range
 gM     = np.pi / 6  # max lateral throw angle (rad)
 
 # Augmented state dim: [x,y,z, vx,vy,vz, Px,Py] = 8
@@ -133,10 +133,10 @@ f_rand_exploration_policy = Policy.Random_Throwing_Exploration
 # Control policy (single-shot RBF: pi(P) -> speed)
 # ---------------------------------------------------------------------------
 centers_init = np.column_stack([
-    np.random.uniform(lm * np.cos(-gM), lM, Nb),   # Px
+    np.random.uniform(lm * np.cos(-gM), lM, Nb),   # Px — starts at target boundary, avoids dead zone
     np.random.uniform(lm * np.sin(-gM), lM * np.sin(gM), Nb),  # Py
 ])
-weight_init    = uM * (np.random.rand(1, Nb) - 0.5)
+weight_init    = uM * (np.random.rand(1, Nb) - 0.5)        # [-uM/2, uM/2]  — reverted; [-uM, uM] caused tanh saturation
 lengthscales_init = np.array([1.0, 1.0])   # one per target dimension
 
 control_policy_par = {

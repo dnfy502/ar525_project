@@ -14,9 +14,9 @@ AR525 Group-3, IIT Mandi
 | `uM` | 3.5 m/s | 3.5 m/s | Max release speed |
 | `Ts` | 0.02 s | 0.01 s | Simulation timestep — doubled for ~3x speedup |
 | `T` | 0.7 s | 1.0 s | Simulation horizon — trimmed (ball lands by ~0.58s) |
-| `lc` | 0.5 m | 0.1 m | Cost lengthscale — widened to avoid gradient starvation |
+| `lc` | 0.5 m | 0.1 m | Cost lengthscale — widened; lc=0.1 causes gradient starvation from random exploration throws |
 | `lm` | 0.75 m | 0.75 m | Min target distance |
-| `lM` | 2.4 m | 2.4 m | Max target distance |
+| `lM` | 1.75 m | 1.75 m | Max target distance — reverted to paper's value (2.4 was beyond reachable range) |
 | `γM` | π/6 rad | π/6 rad | Max lateral throw angle |
 
 ---
@@ -108,20 +108,15 @@ State reconstruction (Eq. 18 from paper):
 
 ---
 
-## Current Results (seed=1, 10 trials)
+## Current Results (seed=1, 5 trials, lM=1.75m)
 
 | Throw | Phase | Error (m) | Hit (<0.1m) | Target dist |
 |-------|-------|-----------|-------------|-------------|
-| 1–5 | Explore | 0.28–1.56m | — | random |
-| 6 | Trial 1 | 0.61m | miss | 2.10m |
-| 7 | Trial 2 | **0.030m** | HIT | 0.82m |
-| 8 | Trial 3 | **0.015m** | HIT | 1.41m |
-| 9 | Trial 4 | 0.123m | miss | 1.61m |
-| 10 | Trial 5 | **0.013m** | HIT | 1.14m |
-| 11 | Trial 6 | **0.035m** | HIT | 1.34m |
-| 12 | Trial 7 | 0.123m | miss | 1.75m |    
-| 13 | Trial 8 | 0.732m | miss | 2.15m |
-| 14 | Trial 9 | 0.399m | miss | 2.00m |
-| 15 | Trial 10 | **0.012m** | HIT | 1.08m |
+| 1–5 | Explore | 0.02–1.09m | — | random |
+| 6 | Trial 1 | **0.085m** | HIT | 1.66m |
+| 7 | Trial 2 | **0.033m** | HIT | 1.60m |
+| 8 | Trial 3 | **0.023m** | HIT | 1.18m |
+| 9 | Trial 4 | **0.017m** | HIT | 0.79m |
+| 10 | Trial 5 | **0.008m** | HIT | 1.10m |
 
-**5/10 hits (50%).** Near/mid targets (< 1.8m): mostly hitting. Far targets (> 1.9m): mostly missing.
+**5/5 hits (100%).** Cost: 0.74 → 0.009 (Trial 1), 0.001 (Trial 5). Policy converged by Trial 5.

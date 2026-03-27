@@ -78,6 +78,40 @@ AR525 Group-3, IIT Mandi
 
 ---
 
+---
+
+### Experiment G: Revert lc from 0.5 m to paper's 0.1 m
+- **File:** `test_mc_pilot.py`
+- **Hypothesis:** lc was widened to 0.5 because early errors (0.3–1.5m) saturated the cost at lc=0.1, killing gradients. That saturation was caused by physically unreachable targets (lM=2.4). With lM=1.75 (all targets reachable) and a well-trained GP, exploration throws should land much closer to targets — keeping cost below saturation at lc=0.1. Sharper cost function should enable finer accuracy and lower final cost.
+- **Changes:** `lc = 0.5 → 0.1`
+- **Result:** FAILED. 0/10 hits. Cost floor stuck at ~0.80–0.81 across all 10 trials (never below 0.79). Errors actually worsened after Trial 5 (0.7–0.86m), suggesting policy wandering rather than learning.
+- **Root cause:** Exploration throws still land 0.27–1.09m from targets (random speed, GP untrained at that point). At lc=0.1, an error of 0.27m gives cost ≈ 0.999 — essentially saturated. Nearly all particles are at cost~1.0 before Trial 1 even begins, so gradients are near zero and the optimizer can only scratch down to ~0.80 before signal disappears. The GP needs several trials at lc=0.5 to become accurate enough that lc=0.1 is viable.
+- **Lesson:** lc=0.1 requires the policy to already be near-accurate before it provides useful gradients. It cannot bootstrap from scratch with random exploration. lc=0.5 is necessary for initial learning.
+
+---
+
+### Experiment F: Revert RBF center and weight init to paper's Eq. 22 (with corrected lM=1.75)
+- **File:** `test_mc_pilot.py`
+- **Hypothesis:** Experiment D tried this with lM=2.4 and failed (0/10 hits) — dead zone (Px<0.65) wasted 27% of centers on unreachable targets, and impossible far targets created noisy gradients. With lM=1.75 (all targets reachable), the gradient landscape is clean. Wider init may improve boundary smoothness and prevent local minima.
+- **Changes:**
+  - Centers: `Px ∈ [lm·cos(gM), lM] → [0, lM]`, `Py ∈ [lm·sin(-gM), lM·sin(gM)] → [-lM·sin(gM), lM·sin(gM)]`
+  - Weights: `[-uM/2, uM/2] → [-uM, uM]`
+- **Note:** Dead zone (Px < ~0.65m) is still ~37% of Px range, but all sampled targets are now within physics reach so gradients are meaningful.
+- **Result:** FAILED. 2/10 hits. Cost stuck at ~0.45–0.50 across all 10 trials (Trial 1: 0.73→0.49, Trials 2–10: plateau immediately at 0.45–0.50, never escaping). Same failure mode as Experiment D despite correct lM=1.75.
+- **Root cause:** The target domain is strictly a sector between 0.75m and 1.75m. By starting centers at Px=0, ~37% of the 250 basis functions land in a dead zone where targets never spawn. These become "ghost centers" — never trained by any real throw, they output persistent random background noise that corrupts the RBF sum across the entire target arc. This leaves only ~160 centers to cover the actual target region, which isn't enough density to sculpt a smooth, accurate speed ramp. The optimizer gets stuck at cost ~0.44–0.53 because the policy landscape is too noisy and under-resolved to optimize through.
+- **Sub-experiment F1 additionally had:** wide weights [-uM, uM] causing tanh saturation on top of the center problem.
+- **Conclusion:** Paper's Eq. 22 center domain is designed for their geometry and cannot be ported directly. Centers must begin at the actual target boundary (~lm·cos(gM)≈0.65m), ensuring all 250 basis functions cover regions where targets actually appear.
+
+---
+
+### Experiment E: Reduce lM from 2.4 m to 1.75 m (paper's value)
+- **File:** `test_mc_pilot.py`
+- **Hypothesis:** Paper defines target domain as l ∈ [0.75, 1.75] m. At lM=2.4 m with uM=3.5 m/s and α=35°, far targets may be physically unreachable — policy penalized for impossible throws. Reverting to paper's lM should eliminate far-target misses.
+- **Changes:** `lM = 2.4 → 1.75`. RBF centers upper bound auto-updates (uses `lM` variable).
+- **Result:** SUCCESS. 5/5 hits (100%). Errors: 85mm, 33mm, 23mm, 17mm, 8mm. Cost converged from 0.74 → 0.009 in Trial 1, reaching 0.001 by Trial 5. Trial 5 hit early stopping at step 1204 — policy fully converged. Far-target misses eliminated entirely.
+
+---
+
 ## Current Best Configuration
 
 | Parameter | Value | Note |
@@ -85,6 +119,7 @@ AR525 Group-3, IIT Mandi
 | `lc` | 0.5m | Wider than paper (0.1m) for gradient coverage |
 | `Ts` | 0.02s | 2x paper value, ~3x speedup |
 | `T` | 0.7s | Trimmed from 1.0s, ball lands by 0.58s |
+| `lM` | 1.75m | Paper's value; 2.4m was beyond physical reach |
 | `Nopt` | 1500 | Early stopping handles actual termination |
 | `min_diff_cost` | 0.02 | Relaxed from 0.08 |
 | `num_min_diff_cost` | 400 | Relaxed from 200 |
@@ -92,25 +127,18 @@ AR525 Group-3, IIT Mandi
 | Exploration | Random | Baseline policy gave worse GP coverage |
 | Threads | 1 | Multi-threading counterproductive |
 
-## Current Best Scores (seed=1, 10 trials, random exploration, lc=0.5)
+## Current Best Scores (seed=1, 5 trials, random exploration, lc=0.5, lM=1.75)
 
 | Throw | Phase | Error (m) | Hit (<0.1m) | Target dist |
 |-------|-------|-----------|-------------|-------------|
-| 1–5 | Explore | 0.28–1.56m | — | random |
-| 6 | Trial 1 | 0.61m | miss | 2.10m |
-| 7 | Trial 2 | **0.030m** | HIT | 0.82m |
-| 8 | Trial 3 | **0.015m** | HIT | 1.41m |
-| 9 | Trial 4 | 0.123m | miss | 1.61m |
-| 10 | Trial 5 | **0.013m** | HIT | 1.14m |
-| 11 | Trial 6 | **0.035m** | HIT | 1.34m |
-| 12 | Trial 7 | 0.123m | miss | 1.75m |
-| 13 | Trial 8 | 0.732m | miss | 2.15m |
-| 14 | Trial 9 | 0.399m | miss | 2.00m |
-| 15 | Trial 10 | **0.012m** | HIT | 1.08m |
+| 1–5 | Explore | 0.02–1.09m | — (1 accidental hit) | random |
+| 6 | Trial 1 | **0.085m** | HIT | 1.66m |
+| 7 | Trial 2 | **0.033m** | HIT | 1.60m |
+| 8 | Trial 3 | **0.023m** | HIT | 1.18m |
+| 9 | Trial 4 | **0.017m** | HIT | 0.79m |
+| 10 | Trial 5 | **0.008m** | HIT | 1.10m |
 
-**Summary:** 5/10 hits (50%). Near/mid targets (<1.8m): mostly hitting. Far targets (>1.9m): mostly missing.
-
-**Root cause of far-target misses:** GP has limited training data at high speeds/long range. Random exploration throws tend to land short, leaving the far-range region under-sampled.
+**Summary:** 5/5 hits (100%). Cost converged from 0.74 → 0.009 (Trial 1) to 0.001 (Trial 5). Policy fully converged by Trial 5 (early stopped at step 1204).
 
 ---
 

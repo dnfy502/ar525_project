@@ -566,3 +566,73 @@ class Random_Throwing_Exploration(Policy):
             return torch.zeros(batch, 1, dtype=self.dtype, device=self.device)
         speed = self.u_max * torch.rand(batch, 1, dtype=self.dtype, device=self.device)
         return speed
+
+
+class Baseline_Throwing_Exploration(Policy):
+    """
+    Baseline exploration policy for the throwing task (Eq. 13 of MC-PILOT paper).
+
+    Computes the analytically correct release speed from ballistic equations,
+    assuming point-mass projectile with no drag:
+
+        π(P) = sqrt(g · d² / (2 · cos²(α) · (d · tan(α) - z_P + z_rel)))
+
+    This gives the GP data from throws that actually reach the target region,
+    improving model coverage across the full target space.
+    """
+
+    def __init__(
+        self,
+        full_state_dim,
+        u_max,
+        launch_angle,
+        release_height,
+        dtype=torch.float64,
+        device=torch.device("cpu"),
+    ):
+        super(Baseline_Throwing_Exploration, self).__init__(
+            state_dim=full_state_dim,
+            input_dim=1,
+            flg_squash=False,
+            u_max=u_max,
+            dtype=dtype,
+            device=device,
+        )
+        self.u_max = u_max
+        self.launch_angle = launch_angle
+        self.release_height = release_height
+        self._g = 9.81
+
+    def forward(self, states, t=None, p_dropout=0.0):
+        batch = states.shape[0] if states.dim() == 2 else 1
+        states_2d = states.view(batch, -1)
+        if t is not None and t > 0:
+            return torch.zeros(batch, 1, dtype=self.dtype, device=self.device)
+
+        # Extract target P from augmented state (last 2 dims)
+        Px = states_2d[:, -2]
+        Py = states_2d[:, -1]
+        # Release position (first 3 dims)
+        x0 = states_2d[:, 0]
+        y0 = states_2d[:, 1]
+
+        dx = Px - x0
+        dy = Py - y0
+        d = torch.sqrt(dx ** 2 + dy ** 2)
+
+        alpha = self.launch_angle
+        z_rel = self.release_height
+        tan_a = np.tan(alpha)
+        cos_a = np.cos(alpha)
+
+        # Eq. 13: v = sqrt(g * d^2 / (2 * cos^2(a) * (d*tan(a) - z_P + z_rel)))
+        # z_P = 0 for ground targets
+        denom = d * tan_a + z_rel
+        # Clamp denominator to avoid division by zero or negative (infeasible targets)
+        denom = torch.clamp(denom, min=0.01)
+        speed_sq = self._g * d ** 2 / (2.0 * cos_a ** 2 * denom)
+        speed = torch.sqrt(speed_sq)
+        # Clamp to [0, u_max]
+        speed = torch.clamp(speed, min=0.0, max=self.u_max)
+
+        return speed.unsqueeze(1)

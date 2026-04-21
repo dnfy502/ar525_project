@@ -86,9 +86,12 @@ State reconstruction (Eq. 18 from paper):
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Policy | `Random_Throwing_Exploration` | Uniform random speed ∈ [0, uM] at t=0 |
+| Policy (baseline A) | `Random_Throwing_Exploration` | Uniform random speed ∈ [0, uM] at t=0 |
+| Policy (elevated B–E) | `Stratified_Throwing_Exploration` | [0, uM] split into Nexp bands; throw i samples band i. Seed-robust. |
 | Target sampling | Uniform over arc `[lm, lM] × [-γM, γM]` | Polar coordinates, converted to (Px, Py) |
 | Data augmentation `Na` | 0 | No rotation augmentation (same as paper's simulation setting) |
+
+**Why stratified for elevated configs:** At higher release heights, the speed-to-range mapping is more spread out — unlucky random seeds can draw all low speeds, leaving the GP blind to high-speed dynamics and causing the policy to saturate at max speed (0/10 hits with seed=1 on Config B). Stratified exploration guarantees full coverage in 5 throws regardless of seed.
 
 ---
 

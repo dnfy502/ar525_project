@@ -1,0 +1,1093 @@
+=== FULL TRAINING: 15 trials, 10 explorations for aware models ===
+Started at Sat Apr 25 07:44:01 AM CEST 2026
+/home/rishang/ar525_project/mc-pilot-wind/gpr_lib/GP_prior/GP_prior.py:106: UserWarning: torch.cholesky is deprecated in favor of torch.linalg.cholesky and will be removed in a future PyTorch release.
+L = torch.cholesky(A)
+should be replaced with
+L = torch.linalg.cholesky(A)
+and
+U = torch.cholesky(A, upper=True)
+should be replaced with
+U = torch.linalg.cholesky(A).mH
+This transform will produce equivalent results for all valid (symmetric positive definite) inputs. (Triggered internally at ../aten/src/ATen/native/BatchLinearAlgebra.cpp:1691.)
+  U = torch.cholesky(K_X, upper=True)
+
+
+Get the system...
+
+
+Get the learning object...
+GP APPROXIMATION SELECTED
+APPROXIMATION MODE:  SOD
+APPROXIMATION OPTIONS:  {'SOD_threshold_mode': 'relative', 'SOD_threshold': 0.5, 'flg_SOD_permutation': False}
+
+
+Get the exploration policy...
+
+
+Get the control policy...
+
+
+Get the cost function...
+
+W1 Constant Wind: speed=5.0 m/s, aware=True, seed=1
+
+
+
+
+----------------- INITIAL EXPLORATIONS -----------------
+
+EXPLORATION # 0
+
+EXPLORATION # 1
+
+EXPLORATION # 2
+
+EXPLORATION # 3
+
+EXPLORATION # 4
+
+EXPLORATION # 5
+
+EXPLORATION # 6
+
+EXPLORATION # 7
+
+EXPLORATION # 8
+
+EXPLORATION # 9
+
+
+
+
+----------------- TRIAL 9 -----------------
+
+
+----- REINFORCE THE MODEL -----
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,
+         1.0000e-02, -8.7152e-08,  0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 24.377188278824512
+Time elapsed: 2.211336374282837
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-5.0723], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 4.4397,  4.8438,  4.6722,  3.5446,  3.6506,  3.5554, -0.0216,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1012.4097837807267
+Time elapsed: 8.136163234710693
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.4039], dtype=torch.float64)
+- log_lengthscales_par : tensor([7.6060, 7.9046, 8.1809, 5.6522, 6.2661, 5.6220, 0.7933, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1199.7304485647253
+Time elapsed: 7.909779071807861
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.4039], dtype=torch.float64)
+- log_lengthscales_par : tensor([7.6060, 7.9046, 8.1809, 5.6522, 6.2661, 5.6220, 0.7933, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([55, 8])
+MSE gp 0:  tensor(2.8143e-06, dtype=torch.float64)
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02,
+        1.1102e-09, 0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 24.377072734208614
+Time elapsed: 0.016570091247558594
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-5.0747], dtype=torch.float64)
+- log_lengthscales_par : tensor([4.4431, 4.8445, 4.6770, 3.5459, 3.6506, 3.5571, 0.0311, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1013.4988365620914
+Time elapsed: 8.009140729904175
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.4544], dtype=torch.float64)
+- log_lengthscales_par : tensor([7.7231, 7.9302, 8.1927, 5.8076, 6.1872, 5.6352, 0.0261, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1210.0721586261293
+Time elapsed: 8.274211645126343
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.4544], dtype=torch.float64)
+- log_lengthscales_par : tensor([7.7231, 7.9302, 8.1927, 5.8076, 6.1872, 5.6352, 0.0261, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([54, 8])
+MSE gp 1:  tensor(2.5242e-06, dtype=torch.float64)
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,
+         1.0000e-02, -1.6931e-07,  0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 24.5150018161931
+Time elapsed: 0.027387619018554688
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-4.7776], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 4.2843,  4.6755, -1.2715,  3.8527,  4.1218,  3.1440,  0.0066,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -906.4432736400656
+Time elapsed: 8.140892744064331
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.5373], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 5.4064,  5.7557, -2.3127,  5.6621,  7.5853,  6.3897,  0.0992,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1121.7020917811103
+Time elapsed: 7.989516258239746
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.5373], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 5.4064,  5.7557, -2.3127,  5.6621,  7.5853,  6.3897,  0.0992,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([201, 8])
+MSE gp 2:  tensor(1.7199e-06, dtype=torch.float64)
+Save log file...
+
+
+----- CHECK THE LEARNING PERFORMANCE (after model update) -----
+MSE gp0:  2.6093282257784224e-06
+MSE gp1:  2.4087235332163615e-06
+MSE gp2:  5.226054766651645e-07
+
+
+----- CHECK THE ROLLOUT PERFORMANCE (after model update) -----
+MSE Rollout dim0:  1.548948492470623e-05
+MSE Rollout dim1:  5.508049336415662e-06
+MSE Rollout dim2:  3.075486474136875e-05
+MSE Rollout dim3:  2.6300375407236847e-05
+MSE Rollout dim4:  4.4425622368117284e-05
+MSE Rollout dim5:  7.63030271282508e-06
+MSE Rollout dim6:  0.0
+MSE Rollout dim7:  0.0
+MSE Rollout dim8:  0.0
+MSE Rollout dim9:  0.0
+
+
+----- REINFORCE THE POLICY -----
+
+DROPOUT ACTIVE:
+p_dropout: 0.25
+
+Optimization step:  0
+cost:  0.846218926161394
+cost improvement:  -0.846218926161394
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0010050378152592135
+time elapsed:  0.48452329635620117
+
+Optimization step:  100
+cost:  0.8371923076182199
+cost improvement:  0.009026618543174103
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0032942178995209416
+time elapsed:  33.47437405586243
+
+Optimization step:  200
+cost:  0.8317810282979982
+cost improvement:  0.005411279320221785
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0024293760089309532
+time elapsed:  29.473285913467407
+
+Optimization step:  300
+cost:  0.8155201775653196
+cost improvement:  0.016260850732678578
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.001142563999881698
+time elapsed:  26.77200198173523
+
+Optimization step:  400
+cost:  0.8183076800633549
+cost improvement:  -0.002787502498035277
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.00042526009980853004
+time elapsed:  25.08173704147339
+Optimization_step: 401
+
+REDUCING THE LEARNING RATE:
+lr:  0.005
+
+REDUCING THE DROPOUT:
+p_dropout_applied:  0.125
+
+Optimization step:  500
+cost:  0.8246173119024288
+cost improvement:  -0.006309631839073959
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.0005942369661896786
+time elapsed:  25.31757354736328
+
+Optimization step:  600
+cost:  0.8170616882383385
+cost improvement:  0.00755562366409035
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  1.778304152228156e-05
+time elapsed:  26.401936769485474
+
+Optimization step:  700
+cost:  0.8257755178393935
+cost improvement:  -0.008713829601055045
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  8.522467999543273e-05
+time elapsed:  31.389414072036743
+
+Optimization step:  800
+cost:  0.8126786767381791
+cost improvement:  0.013096841101214451
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.00023955994576639025
+time elapsed:  25.74085783958435
+Optimization_step: 802
+
+REDUCING THE LEARNING RATE:
+lr:  0.0025
+
+REDUCING THE DROPOUT:
+p_dropout_applied:  0.0
+
+Optimization step:  900
+cost:  0.8160946259320319
+cost improvement:  -0.0034159491938527964
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  1.6587064833539168e-05
+time elapsed:  25.08997106552124
+
+Optimization step:  1000
+cost:  0.801356732744815
+cost improvement:  0.014737893187216855
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0004623021992968588
+time elapsed:  24.789939641952515
+
+Optimization step:  1100
+cost:  0.8342768092289655
+cost improvement:  -0.03292007648415052
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0006830351465399365
+time elapsed:  25.27059817314148
+
+Optimization step:  1200
+cost:  0.8169910321978306
+cost improvement:  0.017285777031134875
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0005030154243199005
+time elapsed:  1132.0211231708527
+
+EXIT FROM OPTIMIZATION: diff_cost_ratio < min_diff_cost for num_min_diff_cost steps
+Save log file...
+
+
+----- APPLY THE CONTROL POLICY -----
+Save log file...
+
+
+----- CHECK THE MODEL LEARNING PERFORMANCE (before model update) -----
+MSE gp0:  3.076192247043094e-06
+MSE gp1:  2.5699306512057054e-06
+MSE gp2:  3.81275593532379e-06
+
+
+----- CHECK THE ROLLOUT PERFORMANCE (before model update) -----
+MSE Rollout dim0:  2.17526666571742e-05
+MSE Rollout dim1:  1.318916479139378e-06
+MSE Rollout dim2:  0.00015130228759967581
+MSE Rollout dim3:  3.3468024267113734e-06
+MSE Rollout dim4:  1.1145448451141003e-05
+MSE Rollout dim5:  3.5419473463655404e-06
+MSE Rollout dim6:  0.0
+MSE Rollout dim7:  0.0
+MSE Rollout dim8:  0.0
+MSE Rollout dim9:  0.0
+
+
+
+
+----------------- TRIAL 10 -----------------
+
+
+----- REINFORCE THE MODEL -----
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02,
+        1.2767e-07, 0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 25.264514076478925
+Time elapsed: 0.013422489166259766
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-5.0656], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 4.3989,  4.8168,  4.6265,  3.5250,  3.6353,  3.5300, -0.0279,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1116.1042216799754
+Time elapsed: 8.181315183639526
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.3953], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 7.5224,  7.9159,  8.1294,  5.5839,  6.2359,  5.6016, -0.4534,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1321.5424194807304
+Time elapsed: 10.42626142501831
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.3953], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 7.5224,  7.9159,  8.1294,  5.5839,  6.2359,  5.6016, -0.4534,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([56, 8])
+MSE gp 0:  tensor(2.8309e-06, dtype=torch.float64)
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,
+         1.0000e-02, -1.0547e-08,  0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 25.264399462284302
+Time elapsed: 0.019104480743408203
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-5.0683], dtype=torch.float64)
+- log_lengthscales_par : tensor([4.4036, 4.8177, 4.6360, 3.5271, 3.6350, 3.5328, 0.0202, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1117.488348079864
+Time elapsed: 8.282798528671265
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.4538], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 7.7131,  7.9517,  8.1608,  5.7541,  6.1588,  5.6048, -0.5603,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1334.7507853695708
+Time elapsed: 10.397700548171997
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.4538], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 7.7131,  7.9517,  8.1608,  5.7541,  6.1588,  5.6048, -0.5603,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([55, 8])
+MSE gp 1:  tensor(2.6259e-06, dtype=torch.float64)
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02,
+        1.4932e-07, 0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 25.409125663384216
+Time elapsed: 0.02826833724975586
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-4.8126], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 4.3409,  4.7229, -1.3116,  3.9234,  4.1994,  3.1592,  0.0210,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1009.5240006658239
+Time elapsed: 12.40323805809021
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.4914], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 6.6033,  6.5658, -2.2939,  5.5833,  7.6759,  6.4736, -0.3768,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1243.4980998574113
+Time elapsed: 13.353529691696167
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.4914], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 6.6033,  6.5658, -2.2939,  5.5833,  7.6759,  6.4736, -0.3768,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([198, 8])
+MSE gp 2:  tensor(2.0081e-06, dtype=torch.float64)
+Save log file...
+
+
+----- CHECK THE LEARNING PERFORMANCE (after model update) -----
+MSE gp0:  3.231146515023554e-06
+MSE gp1:  2.691838215980697e-06
+MSE gp2:  3.327135624693421e-06
+
+
+----- CHECK THE ROLLOUT PERFORMANCE (after model update) -----
+MSE Rollout dim0:  2.683314771386692e-05
+MSE Rollout dim1:  1.4684731767019196e-06
+MSE Rollout dim2:  0.0001513105326008535
+MSE Rollout dim3:  2.6426260218062935e-05
+MSE Rollout dim4:  2.537893987957132e-05
+MSE Rollout dim5:  4.379268843009442e-06
+MSE Rollout dim6:  0.0
+MSE Rollout dim7:  0.0
+MSE Rollout dim8:  0.0
+MSE Rollout dim9:  0.0
+
+
+----- REINFORCE THE POLICY -----
+
+DROPOUT ACTIVE:
+p_dropout: 0.25
+
+Optimization step:  0
+cost:  0.8338696992886183
+cost improvement:  -0.8338696992886183
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0010050378152592135
+time elapsed:  0.6523880958557129
+
+Optimization step:  100
+cost:  0.8207830308364956
+cost improvement:  0.013086668452122696
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.00045729552394969394
+time elapsed:  52.54394030570984
+
+Optimization step:  200
+cost:  0.8283017548910777
+cost improvement:  -0.007518724054582093
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.000986316479695199
+time elapsed:  44.06175518035889
+
+Optimization step:  300
+cost:  0.8336022986099039
+cost improvement:  -0.005300543718826156
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0003954539665870544
+time elapsed:  53.471458196640015
+
+Optimization step:  400
+cost:  0.8257465596165474
+cost improvement:  0.007855738993356454
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  1.7045898230637673e-05
+time elapsed:  48.235185384750366
+Optimization_step: 401
+
+REDUCING THE LEARNING RATE:
+lr:  0.005
+
+REDUCING THE DROPOUT:
+p_dropout_applied:  0.125
+
+Optimization step:  500
+cost:  0.81498037759251
+cost improvement:  0.010766182024037452
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.00025231058000690226
+time elapsed:  36.339191198349
+
+Optimization step:  600
+cost:  0.8135806793040782
+cost improvement:  0.0013996982884317832
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.0004979249686684512
+time elapsed:  48.467082500457764
+
+Optimization step:  700
+cost:  0.813932280661165
+cost improvement:  -0.00035160135708678375
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.00034760152377804574
+time elapsed:  57.99266815185547
+
+Optimization step:  800
+cost:  0.8022461106373538
+cost improvement:  0.011686170023811115
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.0006279463682411517
+time elapsed:  46.88066077232361
+Optimization_step: 802
+
+REDUCING THE LEARNING RATE:
+lr:  0.0025
+
+REDUCING THE DROPOUT:
+p_dropout_applied:  0.0
+
+Optimization step:  900
+cost:  0.8141986733108894
+cost improvement:  -0.011952562673535505
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0003565103690157987
+time elapsed:  46.92400884628296
+
+Optimization step:  1000
+cost:  0.8184316248922963
+cost improvement:  -0.004232951581406907
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.00013344449621806092
+time elapsed:  44.31060314178467
+
+Optimization step:  1100
+cost:  0.814557551337613
+cost improvement:  0.003874073554683277
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0004141136139279052
+time elapsed:  42.22408127784729
+
+Optimization step:  1200
+cost:  0.8207392933221752
+cost improvement:  -0.006181741984562228
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0002213271554638341
+time elapsed:  41.95243835449219
+
+EXIT FROM OPTIMIZATION: diff_cost_ratio < min_diff_cost for num_min_diff_cost steps
+Save log file...
+
+
+----- APPLY THE CONTROL POLICY -----
+Save log file...
+
+
+----- CHECK THE MODEL LEARNING PERFORMANCE (before model update) -----
+MSE gp0:  3.754890153792912e-06
+MSE gp1:  1.6487186598128018e-06
+MSE gp2:  4.384777576675737e-06
+
+
+----- CHECK THE ROLLOUT PERFORMANCE (before model update) -----
+MSE Rollout dim0:  2.298696236096705e-05
+MSE Rollout dim1:  2.882953973040322e-06
+MSE Rollout dim2:  0.00015214681372418399
+MSE Rollout dim3:  7.997602838529289e-06
+MSE Rollout dim4:  3.2595210535268685e-05
+MSE Rollout dim5:  2.6253094018563835e-06
+MSE Rollout dim6:  0.0
+MSE Rollout dim7:  0.0
+MSE Rollout dim8:  0.0
+MSE Rollout dim9:  0.0
+
+
+
+
+----------------- TRIAL 11 -----------------
+
+
+----- REINFORCE THE MODEL -----
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,  1.0000e-02,
+         1.0000e-02, -6.9388e-08,  0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 26.2132204926171
+Time elapsed: 0.03233838081359863
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-5.0601], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 4.3695,  4.7870,  4.5793,  3.5151,  3.6215,  3.5035, -0.0105,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1219.632607254854
+Time elapsed: 12.325320720672607
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.3790], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 7.4286,  7.9210,  7.9393,  5.5426,  6.1810,  5.5431, -0.5772,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1441.0362655797246
+Time elapsed: 12.667482376098633
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.3790], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 7.4286,  7.9210,  7.9393,  5.5426,  6.1810,  5.5431, -0.5772,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([56, 8])
+MSE gp 0:  tensor(2.8477e-06, dtype=torch.float64)
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02,
+        2.8866e-08, 0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 26.213094208915365
+Time elapsed: 0.02483367919921875
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-5.0643], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 4.3750,  4.7886,  4.5969,  3.5175,  3.6209,  3.5084, -0.0087,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1222.0057113433875
+Time elapsed: 11.899789333343506
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.4713], dtype=torch.float64)
+- log_lengthscales_par : tensor([7.6830, 7.9412, 8.1496, 5.7186, 6.0984, 5.5752, 0.0321, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1463.7924406961602
+Time elapsed: 11.603160381317139
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.4713], dtype=torch.float64)
+- log_lengthscales_par : tensor([7.6830, 7.9412, 8.1496, 5.7186, 6.0984, 5.5752, 0.0321, 0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([57, 8])
+MSE gp 1:  tensor(2.5275e-06, dtype=torch.float64)
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02,
+        3.4417e-08, 0.0000e+00], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: 26.364072671381393
+Time elapsed: 0.022413969039916992
+
+EPOCH: 500
+ parameters:
+- sigma_n_log : tensor([-4.8319], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 4.3582,  4.7419, -1.3596,  3.9556,  4.2257,  3.1532, -0.0059,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1110.3261810905467
+Time elapsed: 12.265312671661377
+
+EPOCH: 1000
+ parameters:
+- sigma_n_log : tensor([-6.4692], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 6.4818,  7.3434, -2.2877,  5.6411,  7.8209,  6.4468,  0.3025,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+Running loss: -1365.0640977118994
+Time elapsed: 11.508795022964478
+
+Final parameters:
+ parameters:
+- sigma_n_log : tensor([-6.4692], dtype=torch.float64)
+- log_lengthscales_par : tensor([ 6.4818,  7.3434, -2.2877,  5.6411,  7.8209,  6.4468,  0.3025,  0.0000],
+       dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+Selection of the inducing inputs...
+Shape inducing inputs selected: torch.Size([197, 8])
+MSE gp 2:  tensor(2.2498e-06, dtype=torch.float64)
+Save log file...
+
+
+----- CHECK THE LEARNING PERFORMANCE (after model update) -----
+MSE gp0:  3.784776203790004e-06
+MSE gp1:  1.7837124271824001e-06
+MSE gp2:  4.2589609761400655e-06
+
+
+----- CHECK THE ROLLOUT PERFORMANCE (after model update) -----
+MSE Rollout dim0:  2.2353627672140088e-05
+MSE Rollout dim1:  3.422572043803016e-06
+MSE Rollout dim2:  0.00015199703441171479
+MSE Rollout dim3:  3.01098418406473e-06
+MSE Rollout dim4:  5.497808166798996e-05
+MSE Rollout dim5:  2.82419928645641e-06
+MSE Rollout dim6:  0.0
+MSE Rollout dim7:  0.0
+MSE Rollout dim8:  0.0
+MSE Rollout dim9:  0.0
+
+
+----- REINFORCE THE POLICY -----
+
+DROPOUT ACTIVE:
+p_dropout: 0.25
+
+Optimization step:  0
+cost:  0.8387292754380005
+cost improvement:  -0.8387292754380005
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0010050378152592135
+time elapsed:  0.38370490074157715
+
+Optimization step:  100
+cost:  0.8297330984269855
+cost improvement:  0.00899617701101496
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.004045347322121988
+time elapsed:  44.30307221412659
+
+Optimization step:  200
+cost:  0.8077999478791977
+cost improvement:  0.021933150547787772
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0026053509886337996
+time elapsed:  35.579150915145874
+
+Optimization step:  300
+cost:  0.8250821208741267
+cost improvement:  -0.017282172994928957
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.001253170581029104
+time elapsed:  31.216520071029663
+
+Optimization step:  400
+cost:  0.838573859113178
+cost improvement:  -0.013491738239051365
+p_dropout_applied:  0.25
+current_min_diff_cost;  0.02
+current_min_step:  400
+diff_cost_ratio:  0.0009962798813046825
+time elapsed:  27.27540373802185
+Optimization_step: 401
+
+REDUCING THE LEARNING RATE:
+lr:  0.005
+
+REDUCING THE DROPOUT:
+p_dropout_applied:  0.125
+
+Optimization step:  500
+cost:  0.8291705052877113
+cost improvement:  0.009403353825466754
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.00029760441695580054
+time elapsed:  31.13406538963318
+
+Optimization step:  600
+cost:  0.8282596054609486
+cost improvement:  0.0009108998267627344
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.0004321247310143265
+time elapsed:  30.24310874938965
+
+Optimization step:  700
+cost:  0.8052084127836088
+cost improvement:  0.023051192677339793
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  0.000592498416673175
+time elapsed:  24.848586797714233
+
+Optimization step:  800
+cost:  0.8314753606976083
+cost improvement:  -0.026266947913999528
+p_dropout_applied:  0.125
+current_min_diff_cost;  0.01
+current_min_step:  801
+diff_cost_ratio:  9.798362184739134e-05
+time elapsed:  25.180658102035522
+Optimization_step: 802
+
+REDUCING THE LEARNING RATE:
+lr:  0.0025
+
+REDUCING THE DROPOUT:
+p_dropout_applied:  0.0
+
+Optimization step:  900
+cost:  0.8279578098415277
+cost improvement:  0.0035175508560806312
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0002007254415317516
+time elapsed:  24.42487096786499
+
+Optimization step:  1000
+cost:  0.8361370661648381
+cost improvement:  -0.008179256323310402
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.00024026394002106755
+time elapsed:  544.480073928833
+
+Optimization step:  1100
+cost:  0.8253373206496722
+cost improvement:  0.010799745515165826
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.0001933329180251988
+time elapsed:  27.719618797302246
+
+Optimization step:  1200
+cost:  0.8302008696867127
+cost improvement:  -0.004863549037040449
+p_dropout_applied:  0.0
+current_min_diff_cost;  0.01
+current_min_step:  1202
+diff_cost_ratio:  0.00037939045137180377
+time elapsed:  30.088616847991943
+
+EXIT FROM OPTIMIZATION: diff_cost_ratio < min_diff_cost for num_min_diff_cost steps
+Save log file...
+
+
+----- APPLY THE CONTROL POLICY -----
+Save log file...
+
+
+----- CHECK THE MODEL LEARNING PERFORMANCE (before model update) -----
+MSE gp0:  3.601847217932052e-06
+MSE gp1:  2.3911860534150425e-06
+MSE gp2:  4.763631564374713e-06
+
+
+----- CHECK THE ROLLOUT PERFORMANCE (before model update) -----
+MSE Rollout dim0:  3.0037891022655405e-05
+MSE Rollout dim1:  1.5786746948779324e-06
+MSE Rollout dim2:  0.00015014240026364493
+MSE Rollout dim3:  5.641689899482203e-06
+MSE Rollout dim4:  6.755589164040313e-05
+MSE Rollout dim5:  2.9363987497173534e-06
+MSE Rollout dim6:  0.0
+MSE Rollout dim7:  0.0
+MSE Rollout dim8:  0.0
+MSE Rollout dim9:  0.0
+
+
+
+
+----------------- TRIAL 12 -----------------
+
+
+----- REINFORCE THE MODEL -----
+
+Initial parameters:
+ parameters:
+- sigma_n_log : tensor([0.], dtype=torch.float64)
+- log_lengthscales_par : tensor([0., 0., 0., 0., 0., 0., 0., 0.], dtype=torch.float64)
+- log_lambda_par : tensor([0.], dtype=torch.float64)
+- mean_par : tensor([0.], dtype=torch.float64)
+
+EPOCH: 0
+ parameters:
+- sigma_n_log : tensor([-0.0100], dtype=torch.float64)
+- log_lengthscales_par : tensor([1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02, 1.0000e-02,
+        1.0825e-08, 0.0000e+00], dtype=torch.float64)
+- 

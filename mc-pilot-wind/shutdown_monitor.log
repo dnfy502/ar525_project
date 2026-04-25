@@ -1,0 +1,16 @@
+Monitoring PID 11645 (test_wind_W3.py pipeline)...
+Machine will shut down automatically when training + analysis finishes.
+Training process finished at Sat Apr 25 01:33:03 AM CEST 2026
+
+
+=== All training and analysis complete ===
+Final log tail:
+Check if wind-aware GP+policy consistently outperforms blind baseline.
+If W1-moderate (blind) matches W1-calm, GP absorbs constant wind as bias.
+If W2-blind degrades but W2-aware recovers, explicit wind input is required
+for time-varying wind.
+=== ALL DONE ===
+
+Shutting down in 60 seconds... (Ctrl+C to cancel)
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required

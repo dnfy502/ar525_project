@@ -142,6 +142,7 @@ class PyBulletThrowingSystem:
         vel_traj = []
         released = False
         total_steps = int((self.t_r + T) / dt) + 100
+        release_dir = v_cmd / max(np.linalg.norm(v_cmd), 1e-9)
 
         for step in range(total_steps):
             t = step * dt
@@ -150,10 +151,17 @@ class PyBulletThrowingSystem:
                 arm.step(q_t, qd_t)
 
                 if step >= release_step:
-                    _, ee_vel, _, _ = arm.ee_state()
+                    ee_pos, ee_vel, _, _ = arm.ee_state()
+                    safe_release_pos = ee_pos + release_dir * (1.25 * self.radius)
+                    use_safe_release = self._profile.control_mode == "kinematic"
                     if self.arm_noise is not None:
                         actual_release_vel = self.arm_noise.pybullet_release_vel(v_cmd, ee_vel)
-                        arm.release_ball(ball_id, set_vel=None)
+                        arm.release_ball(
+                            ball_id,
+                            set_vel=None,
+                            release_pos=safe_release_pos if use_safe_release else None,
+                            keep_collision_disabled=use_safe_release,
+                        )
                         p.resetBaseVelocity(
                             ball_id,
                             linearVelocity=actual_release_vel.tolist(),
@@ -161,7 +169,12 @@ class PyBulletThrowingSystem:
                             physicsClientId=client,
                         )
                     else:
-                        actual_release_vel = arm.release_ball(ball_id, set_vel=v_cmd)
+                        actual_release_vel = arm.release_ball(
+                            ball_id,
+                            set_vel=v_cmd,
+                            release_pos=safe_release_pos if use_safe_release else None,
+                            keep_collision_disabled=use_safe_release,
+                        )
 
                     released = True
                     ball_pos, _ = p.getBasePositionAndOrientation(ball_id, physicsClientId=client)

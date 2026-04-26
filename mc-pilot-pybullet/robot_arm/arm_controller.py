@@ -84,6 +84,7 @@ class ArmController:
         self._position_gain = float(self._profile.position_gain)
         self._velocity_gain = float(self._profile.velocity_gain)
         self._force_scale = float(self._profile.force_scale)
+        self._control_mode = str(self._profile.control_mode)
         if q_neutral is None:
             self._q_neutral = np.array(self._profile.q_neutral, dtype=float)
         else:
@@ -213,6 +214,17 @@ class ArmController:
 
     def step(self, q_target, qd_target):
         """Command actuated joints via POSITION_CONTROL for one sim step."""
+        if self._control_mode == "kinematic":
+            for local_i, joint_id in enumerate(self._joint_ids):
+                p.resetJointState(
+                    self._arm_id,
+                    joint_id,
+                    targetValue=float(q_target[local_i]),
+                    targetVelocity=float(qd_target[local_i]),
+                    physicsClientId=self._cid,
+                )
+            return
+
         p.setJointMotorControlArray(
             self._arm_id,
             self._joint_ids,
@@ -225,7 +237,14 @@ class ArmController:
             physicsClientId=self._cid,
         )
 
-    def release_ball(self, ball_id, set_vel=None, dv_noise=None):
+    def release_ball(
+        self,
+        ball_id,
+        set_vel=None,
+        dv_noise=None,
+        release_pos=None,
+        keep_collision_disabled=False,
+    ):
         """
         Remove the grip constraint and optionally override the ball velocity.
         """
@@ -233,8 +252,17 @@ class ArmController:
             p.removeConstraint(self._grip_id, physicsClientId=self._cid)
             self._grip_id = None
         if self._attached_ball_id is not None:
-            self._set_ball_collision_with_arm(self._attached_ball_id, enable=True)
+            if not keep_collision_disabled:
+                self._set_ball_collision_with_arm(self._attached_ball_id, enable=True)
             self._attached_ball_id = None
+
+        if release_pos is not None:
+            p.resetBasePositionAndOrientation(
+                ball_id,
+                posObj=np.array(release_pos, dtype=float).tolist(),
+                ornObj=[0.0, 0.0, 0.0, 1.0],
+                physicsClientId=self._cid,
+            )
 
         if set_vel is not None:
             release_vel = np.array(set_vel, dtype=float)

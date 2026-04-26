@@ -255,7 +255,16 @@ for throw_idx in range(args.num_throws):
             q_t, qd_t = arm.get_setpoint(coeffs, t)
             arm.step(q_t, qd_t)
             if t >= T_R:
-                release_vel = arm.release_ball(ball_id, set_vel=v_cmd)
+                ee_pos_now, _, _, _ = arm.ee_state()
+                release_dir = v_cmd / max(np.linalg.norm(v_cmd), 1e-9)
+                use_safe_release = profile.control_mode == "kinematic"
+                safe_release_pos = ee_pos_now + release_dir * (1.25 * BALL_RADIUS)
+                release_vel = arm.release_ball(
+                    ball_id,
+                    set_vel=v_cmd,
+                    release_pos=safe_release_pos if use_safe_release else None,
+                    keep_collision_disabled=use_safe_release,
+                )
                 print(f"  Released at t={t:.3f}s with |v|={np.linalg.norm(release_vel):.3f} m/s")
                 released = True
         else:

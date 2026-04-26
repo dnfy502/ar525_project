@@ -23,10 +23,12 @@ import csv
 import json
 import os
 import pickle as pkl
+import signal
 import sys
 import time
 from datetime import datetime
 
+import cv2
 import numpy as np
 import pybullet as p
 import pybullet_data
@@ -37,6 +39,7 @@ import policy_learning.Policy as Policy
 from robot_arm.arm_controller import ArmController
 from robot_arm.robot_profiles import available_robot_names, get_robot_profile
 from simulation_class.model import _ball_accel
+from simulation_class.model_pybullet import PyBulletThrowingSystem
 
 
 BALL_MASS = 0.0577
@@ -106,10 +109,48 @@ def build_arg_parser():
     parser.add_argument("--slow", type=float, default=1.0, help="GUI playback slowdown factor")
     parser.add_argument("--record", type=str, default=None, help="optional output .mp4 path")
     parser.add_argument(
+        "--record_mode",
+        type=str,
+        default="camera",
+        choices=["camera", "overlay", "pybullet"],
+        help="record raw camera frames, overlay frames, or PyBullet's built-in MP4 logger",
+    )
+    parser.add_argument("--record_fps", type=float, default=30.0, help="FPS for non-PyBullet MP4 recording")
+    parser.add_argument(
         "--speed_scale",
         type=float,
         default=1.0,
         help="extra multiplier on the policy speed before clipping to uM",
+    )
+    parser.add_argument(
+        "--speed_strategy",
+        type=str,
+        default="search",
+        choices=["policy", "search", "hybrid"],
+        help="how to choose release speed from the estimated target",
+    )
+    parser.add_argument(
+        "--use_legacy_release_pos",
+        action="store_true",
+        help="keep the legacy release position from the training config instead of auto-switching to profile defaults",
+    )
+    parser.add_argument(
+        "--search_grid_size",
+        type=int,
+        default=17,
+        help="number of coarse speed samples for PyBullet search",
+    )
+    parser.add_argument(
+        "--search_refine_steps",
+        type=int,
+        default=2,
+        help="number of local refinement rounds after the coarse search",
+    )
+    parser.add_argument(
+        "--search_refine_width",
+        type=float,
+        default=0.18,
+        help="half-width in m/s of each local refinement window",
     )
     parser.add_argument(
         "--output_dir",
@@ -125,7 +166,7 @@ def build_arg_parser():
     parser.add_argument(
         "--draw_debug",
         action="store_true",
-        help="draw camera rays, estimate markers, and trajectory annotations in PyBullet",
+        help="draw camera rays, estimate markers, trajectory annotations, and a live RGB detection window",
     )
     parser.add_argument(
         "--keep_window_open",
@@ -165,6 +206,24 @@ def build_arg_parser():
         type=float,
         default=0.06,
         help="rendered target sphere radius in meters; used to recover the sphere center from surface depth",
+    )
+    parser.add_argument(
+        "--refine_red_target",
+        action="store_true",
+        default=True,
+        help="refine the target center inside the YOLO box using the rendered red target pixels",
+    )
+    parser.add_argument(
+        "--refine_with_segmentation",
+        action="store_true",
+        default=True,
+        help="in PyBullet, refine the target center inside the YOLO box using the renderer segmentation mask",
+    )
+    parser.add_argument(
+        "--red_min_ratio",
+        type=float,
+        default=1.35,
+        help="minimum red dominance ratio used for target-pixel refinement inside the YOLO box",
     )
     parser.add_argument(
         "--camera_eye",
@@ -299,6 +358,129 @@ def get_speed(policy_obj, release_pos, target_xy):
         inp = torch.tensor(s0, dtype=DTYPE, device=DEVICE).unsqueeze(0)
         speed = policy_obj(inp, t=0, p_dropout=0.0)
     return float(speed.item())
+
+
+def simulate_landing_xy(throwing_system, speed, release_pos, target_xy, flight_time, dt):
+    s0 = np.concatenate([release_pos, np.zeros(3), target_xy])
+
+    def fixed_speed_policy(_state, _t):
+        return np.array([speed], dtype=float)
+
+    clean_states, _, noiseless_states = None, None, None
+    noisy_states, _, clean_states = throwing_system.rollout(
+        s0=s0,
+        policy=fixed_speed_policy,
+        T=flight_time,
+        dt=dt,
+        noise=np.zeros(8, dtype=float),
+    )
+    landing_xy = clean_states[-1, 0:2].copy()
+    return landing_xy
+
+
+def choose_speed_for_target(
+    speed_strategy,
+    policy_obj,
+    throwing_system,
+    release_pos,
+    target_xy,
+    u_min,
+    u_max,
+    dt,
+    flight_time,
+    speed_scale,
+    grid_size,
+    refine_steps,
+    refine_width,
+):
+    policy_speed = min(max(get_speed(policy_obj, release_pos, target_xy) * speed_scale, u_min), u_max)
+    policy_landing_xy = simulate_landing_xy(
+        throwing_system=throwing_system,
+        speed=policy_speed,
+        release_pos=release_pos,
+        target_xy=target_xy,
+        flight_time=flight_time,
+        dt=dt,
+    )
+    policy_error = float(np.linalg.norm(policy_landing_xy - target_xy))
+
+    if speed_strategy == "policy":
+        return {
+            "speed": float(policy_speed),
+            "strategy_used": "policy",
+            "policy_speed": float(policy_speed),
+            "policy_error_pred_m": policy_error,
+            "search_error_pred_m": None,
+            "search_best_speed": None,
+            "search_best_landing_xy": None,
+            "policy_landing_xy": policy_landing_xy,
+        }
+
+    coarse_speeds = np.linspace(u_min, u_max, max(3, int(grid_size)))
+    if speed_strategy == "hybrid":
+        coarse_speeds = np.unique(np.concatenate([coarse_speeds, [policy_speed]])).astype(float)
+
+    best_speed = None
+    best_error = np.inf
+    best_landing_xy = None
+
+    for speed in coarse_speeds:
+        landing_xy = simulate_landing_xy(
+            throwing_system=throwing_system,
+            speed=float(speed),
+            release_pos=release_pos,
+            target_xy=target_xy,
+            flight_time=flight_time,
+            dt=dt,
+        )
+        error = float(np.linalg.norm(landing_xy - target_xy))
+        if error < best_error:
+            best_error = error
+            best_speed = float(speed)
+            best_landing_xy = landing_xy
+
+    for _ in range(max(0, int(refine_steps))):
+        low = max(u_min, best_speed - refine_width)
+        high = min(u_max, best_speed + refine_width)
+        local_speeds = np.linspace(low, high, 9)
+        for speed in local_speeds:
+            landing_xy = simulate_landing_xy(
+                throwing_system=throwing_system,
+                speed=float(speed),
+                release_pos=release_pos,
+                target_xy=target_xy,
+                flight_time=flight_time,
+                dt=dt,
+            )
+            error = float(np.linalg.norm(landing_xy - target_xy))
+            if error < best_error:
+                best_error = error
+                best_speed = float(speed)
+                best_landing_xy = landing_xy
+
+    use_policy = speed_strategy == "hybrid" and policy_error <= best_error
+    if use_policy:
+        return {
+            "speed": float(policy_speed),
+            "strategy_used": "policy",
+            "policy_speed": float(policy_speed),
+            "policy_error_pred_m": policy_error,
+            "search_error_pred_m": best_error,
+            "search_best_speed": float(best_speed),
+            "search_best_landing_xy": best_landing_xy,
+            "policy_landing_xy": policy_landing_xy,
+        }
+
+    return {
+        "speed": float(best_speed),
+        "strategy_used": "search",
+        "policy_speed": float(policy_speed),
+        "policy_error_pred_m": policy_error,
+        "search_error_pred_m": float(best_error),
+        "search_best_speed": float(best_speed),
+        "search_best_landing_xy": best_landing_xy,
+        "policy_landing_xy": policy_landing_xy,
+    }
 
 
 class YoloDetector:
@@ -497,6 +679,81 @@ def select_depth_from_bbox(depth_m, bbox_xyxy, roi_scale, percentile):
     }
 
 
+def refine_target_pixels(rgb_image, depth_m, bbox_xyxy, red_min_ratio):
+    height, width, _ = rgb_image.shape
+    x1, y1, x2, y2 = clip_bbox_xyxy(bbox_xyxy, width, height)
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    patch = rgb_image[y1 : y2 + 1, x1 : x2 + 1].astype(np.float32)
+    depth_patch = depth_m[y1 : y2 + 1, x1 : x2 + 1]
+    red = patch[:, :, 0]
+    green = patch[:, :, 1]
+    blue = patch[:, :, 2]
+    max_gb = np.maximum(green, blue)
+    valid_depth = np.isfinite(depth_patch) & (depth_patch > 0.0)
+
+    red_mask = (
+        valid_depth
+        & (red >= 80.0)
+        & (red / np.maximum(max_gb, 1.0) >= red_min_ratio)
+        & ((red - 0.5 * (green + blue)) >= 30.0)
+    )
+    if int(red_mask.sum()) < 12:
+        return None
+
+    ys, xs = np.where(red_mask)
+    u = float(x1 + xs.mean())
+    v = float(y1 + ys.mean())
+    surface_depth = float(np.median(depth_patch[red_mask]))
+    rx1 = int(x1 + xs.min())
+    ry1 = int(y1 + ys.min())
+    rx2 = int(x1 + xs.max())
+    ry2 = int(y1 + ys.max())
+    return {
+        "bbox_px": [x1, y1, x2, y2],
+        "roi_px": [rx1, ry1, rx2, ry2],
+        "pixel_uv": [u, v],
+        "surface_depth_m": surface_depth,
+        "num_valid_depth_samples": int(np.count_nonzero(valid_depth)),
+        "num_refined_pixels": int(red_mask.sum()),
+        "refinement_mode": "red-pixel-mask",
+    }
+
+
+def refine_target_segmentation(seg_image, depth_m, bbox_xyxy, target_body_id):
+    if target_body_id is None:
+        return None
+    height, width = depth_m.shape
+    x1, y1, x2, y2 = clip_bbox_xyxy(bbox_xyxy, width, height)
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    seg_patch = seg_image[y1 : y2 + 1, x1 : x2 + 1]
+    depth_patch = depth_m[y1 : y2 + 1, x1 : x2 + 1]
+    mask = (seg_patch == int(target_body_id)) & np.isfinite(depth_patch) & (depth_patch > 0.0)
+    if int(mask.sum()) < 8:
+        return None
+
+    ys, xs = np.where(mask)
+    u = float(x1 + xs.mean())
+    v = float(y1 + ys.mean())
+    surface_depth = float(np.median(depth_patch[mask]))
+    rx1 = int(x1 + xs.min())
+    ry1 = int(y1 + ys.min())
+    rx2 = int(x1 + xs.max())
+    ry2 = int(y1 + ys.max())
+    return {
+        "bbox_px": [x1, y1, x2, y2],
+        "roi_px": [rx1, ry1, rx2, ry2],
+        "pixel_uv": [u, v],
+        "surface_depth_m": surface_depth,
+        "num_valid_depth_samples": int(mask.sum()),
+        "num_refined_pixels": int(mask.sum()),
+        "refinement_mode": "segmentation-mask",
+    }
+
+
 def backproject_pixel_to_world(u, v, depth_m, camera_cfg):
     x_cam = (u - camera_cfg["cx"]) * depth_m / camera_cfg["fx"]
     y_cam = -(v - camera_cfg["cy"]) * depth_m / camera_cfg["fy"]
@@ -516,13 +773,50 @@ def unproject_with_view_projection(u, v, depth_buffer_value, camera_cfg):
     return world_h[:3] / world_h[3]
 
 
-def estimate_target_world(detection, depth_m, depth_buffer, camera_cfg, target_radius, roi_scale, percentile):
-    depth_info = select_depth_from_bbox(
-        depth_m=depth_m,
-        bbox_xyxy=detection["bbox_xyxy"],
-        roi_scale=roi_scale,
-        percentile=percentile,
-    )
+def estimate_target_world(
+    detection,
+    rgb_image,
+    depth_m,
+    depth_buffer,
+    seg_image,
+    camera_cfg,
+    target_radius,
+    roi_scale,
+    percentile,
+    refine_with_segmentation,
+    refine_red_target,
+    red_min_ratio,
+    target_body_id,
+):
+    if refine_with_segmentation:
+        depth_info = refine_target_segmentation(
+            seg_image=seg_image,
+            depth_m=depth_m,
+            bbox_xyxy=detection["bbox_xyxy"],
+            target_body_id=target_body_id,
+        )
+    else:
+        depth_info = None
+
+    if depth_info is None and refine_red_target:
+        depth_info = refine_target_pixels(
+            rgb_image=rgb_image,
+            depth_m=depth_m,
+            bbox_xyxy=detection["bbox_xyxy"],
+            red_min_ratio=red_min_ratio,
+        )
+    else:
+        depth_info = None
+
+    if depth_info is None:
+        depth_info = select_depth_from_bbox(
+            depth_m=depth_m,
+            bbox_xyxy=detection["bbox_xyxy"],
+            roi_scale=roi_scale,
+            percentile=percentile,
+        )
+        depth_info["refinement_mode"] = "bbox-roi"
+
     u, v = depth_info["pixel_uv"]
     surface_world = backproject_pixel_to_world(u, v, depth_info["surface_depth_m"], camera_cfg)
 
@@ -593,6 +887,85 @@ def maybe_save_debug_images(base_path, rgb_image, depth_m, chosen_detection, dep
         Image.fromarray(depth_vis, mode="L").save(base_path + "_depth.png")
 
 
+def make_detection_overlay(rgb_image, chosen_detection, all_detections, depth_info, gt_target_xy, est_target_world):
+    overlay_bgr = np.ascontiguousarray(rgb_image[:, :, ::-1].copy())
+
+    for idx, det in enumerate(all_detections):
+        x1, y1, x2, y2 = [int(round(v)) for v in det["bbox_xyxy"]]
+        color = (0, 255, 0) if idx == 0 and chosen_detection is not None and det is chosen_detection else (0, 180, 255)
+        cv2.rectangle(overlay_bgr, (x1, y1), (x2, y2), color, 2)
+        label = f"{det['class_name']} {det['confidence']:.2f}"
+        cv2.putText(
+            overlay_bgr,
+            label,
+            (x1, max(18, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    info_lines = [f"GT xy: ({gt_target_xy[0]:.3f}, {gt_target_xy[1]:.3f})"]
+    if chosen_detection is not None and depth_info is not None and est_target_world is not None:
+        u, v = depth_info["pixel_uv"]
+        cv2.circle(overlay_bgr, (int(round(u)), int(round(v))), 4, (0, 255, 255), -1)
+        rx1, ry1, rx2, ry2 = [int(v) for v in depth_info["roi_px"]]
+        cv2.rectangle(overlay_bgr, (rx1, ry1), (rx2, ry2), (0, 255, 255), 1)
+        info_lines.append(f"Est xy: ({est_target_world[0]:.3f}, {est_target_world[1]:.3f})")
+        info_lines.append(f"Depth: {depth_info['surface_depth_m']:.3f} m")
+        info_lines.append(f"Perception err: {np.linalg.norm(est_target_world[:2] - gt_target_xy):.3f} m")
+    else:
+        info_lines.append("Est xy: unavailable")
+
+    y0 = 24
+    for idx, line in enumerate(info_lines):
+        cv2.putText(
+            overlay_bgr,
+            line,
+            (10, y0 + 24 * idx),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.60,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+    return overlay_bgr
+
+
+def show_detection_overlay(window_name, overlay_bgr, wait_ms=1):
+    cv2.imshow(window_name, overlay_bgr)
+    cv2.waitKey(wait_ms)
+
+
+class VideoRecorder:
+    def __init__(self, output_path, width, height, fps):
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self._writer = cv2.VideoWriter(output_path, fourcc, float(fps), (int(width), int(height)))
+        if not self._writer.isOpened():
+            raise RuntimeError(f"Failed to open video writer for {output_path}")
+        self.output_path = output_path
+        self.width = int(width)
+        self.height = int(height)
+        self.fps = float(fps)
+
+    def write_bgr(self, frame_bgr):
+        if frame_bgr.shape[1] != self.width or frame_bgr.shape[0] != self.height:
+            frame_bgr = cv2.resize(frame_bgr, (self.width, self.height), interpolation=cv2.INTER_AREA)
+        self._writer.write(np.ascontiguousarray(frame_bgr))
+
+    def close(self):
+        if self._writer is not None:
+            self._writer.release()
+            self._writer = None
+
+
+def make_camera_frame_bgr(client_id, camera_cfg, direct_mode):
+    rgb_image, _, _, _ = render_rgbd(client_id, camera_cfg, direct_mode)
+    return np.ascontiguousarray(rgb_image[:, :, ::-1])
+
+
 def create_target_visual(client_id, target_xy, target_radius, rgba):
     target_pos = np.array([target_xy[0], target_xy[1], target_radius], dtype=float)
     target_vis = p.createVisualShape(
@@ -624,7 +997,9 @@ def execute_throw(
     direct_mode,
     slow_factor,
     draw_debug,
-):
+    camera_cfg=None,
+    frame_callback=None,
+  ):
     launch_angle = np.deg2rad(LAUNCH_ANGLE_DEG)
     T_W, T_R, T_ARM = get_robot_profile(arm.robot_name).timing
 
@@ -642,6 +1017,8 @@ def execute_throw(
 
     arm.reset()
     p.stepSimulation(physicsClientId=client_id)
+    if frame_callback is not None and camera_cfg is not None:
+        frame_callback(make_camera_frame_bgr(client_id, camera_cfg, direct_mode))
     if not direct_mode:
         time.sleep(0.30 * slow_factor)
 
@@ -712,6 +1089,8 @@ def execute_throw(
                 break
 
         p.stepSimulation(physicsClientId=client_id)
+        if frame_callback is not None and camera_cfg is not None:
+            frame_callback(make_camera_frame_bgr(client_id, camera_cfg, direct_mode))
         if not direct_mode:
             time.sleep(dt * slow_factor)
 
@@ -832,6 +1211,19 @@ def main():
     lM = runtime_cfg["lM"]
     gM = runtime_cfg["gM"]
     uM = runtime_cfg["uM"]
+    search_u_min = float(train_cfg.get("uMin", profile.speed_bounds[0]))
+
+    if (
+        not args.use_profile_defaults
+        and not args.use_legacy_release_pos
+        and profile.name == "kuka_iiwa"
+        and np.linalg.norm(release_pos[:2]) < 0.10
+    ):
+        release_pos = np.array(profile.default_release_pos, dtype=float)
+        runtime_cfg["release_pos"] = release_pos.copy()
+        uM = min(float(uM), float(profile.speed_bounds[1]))
+        runtime_cfg["uM"] = uM
+        search_u_min = float(profile.speed_bounds[0])
 
     output_dir = make_output_dir(args.output_dir, args.seed)
     frames_dir = os.path.join(output_dir, "frames")
@@ -870,7 +1262,12 @@ def main():
         "used_target_x",
         "used_target_y",
         "used_ground_truth_fallback",
+        "speed_strategy_requested",
+        "speed_strategy_used",
         "policy_speed_mps",
+        "policy_predicted_error_m",
+        "search_best_speed_mps",
+        "search_predicted_error_m",
         "planned_vx",
         "planned_vy",
         "planned_vz",
@@ -909,9 +1306,17 @@ def main():
 
     urdf_path = pybullet_data.getDataPath() + "/" + profile.urdf_rel_path
     arm = ArmController(client, urdf_path, robot_name=profile.name)
+    search_throwing_system = PyBulletThrowingSystem(
+        mass=BALL_MASS,
+        radius=BALL_RADIUS,
+        launch_angle_deg=LAUNCH_ANGLE_DEG,
+        arm_noise=None,
+        gui_mode=False,
+        robot_name=profile.name,
+    )
 
     log_id = None
-    if args.record is not None:
+    if args.record is not None and args.record_mode == "pybullet":
         log_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, args.record, physicsClientId=client)
 
     print(f"Loaded policy from {args.log_path}")
@@ -919,7 +1324,12 @@ def main():
     if runtime_cfg["robot_overridden"]:
         print(f"Config robot={runtime_cfg['cfg_robot_name']} but running robot={profile.name}")
     print(f"Release position: {np.round(release_pos, 4)}")
+    if profile.name == "kuka_iiwa" and not args.use_legacy_release_pos and np.allclose(
+        release_pos, np.array(profile.default_release_pos, dtype=float)
+    ):
+        print("Using the profile-default KUKA release pose for stable throws in the vision test.")
     print(f"Target range: lm={lm:.3f}, lM={lM:.3f}, gM={gM:.3f} rad")
+    print(f"Speed search bounds: [{search_u_min:.3f}, {uM:.3f}] m/s")
     print(
         f"Rendered target object: red sphere marker with radius={args.target_radius:.3f} m "
         "placed at the sampled target position"
@@ -928,8 +1338,30 @@ def main():
     print(f"Logging to {output_dir}")
 
     rows = []
+    debug_window_name = "MC-PILOT Vision Detection"
+    video_recorder = None
+    stop_requested = {"value": False}
+
+    def _request_stop(_signum=None, _frame=None):
+        stop_requested["value"] = True
+
+    old_sigint = signal.getsignal(signal.SIGINT)
     try:
+        signal.signal(signal.SIGINT, _request_stop)
+    except Exception:
+        old_sigint = None
+    try:
+        if args.record is not None and args.record_mode != "pybullet":
+            video_recorder = VideoRecorder(
+                output_path=args.record,
+                width=camera_cfg["width"],
+                height=camera_cfg["height"],
+                fps=args.record_fps,
+            )
         for throw_idx in range(args.num_throws):
+            if stop_requested["value"]:
+                print("Stop requested. Finishing cleanly and closing the video file.")
+                break
             p.removeAllUserDebugItems(physicsClientId=client)
             if args.draw_debug:
                 draw_camera_debug(client, camera_cfg)
@@ -951,7 +1383,7 @@ def main():
                     physicsClientId=client,
                 )
 
-            rgb_image, depth_m, depth_buffer, _ = render_rgbd(client, camera_cfg, args.direct)
+            rgb_image, depth_m, depth_buffer, seg_image = render_rgbd(client, camera_cfg, args.direct)
             chosen_detection, all_detections = detector.predict(rgb_image)
 
             used_gt_fallback = False
@@ -965,12 +1397,18 @@ def main():
                 try:
                     depth_info = estimate_target_world(
                         detection=chosen_detection,
+                        rgb_image=rgb_image,
                         depth_m=depth_m,
                         depth_buffer=depth_buffer,
+                        seg_image=seg_image,
                         camera_cfg=camera_cfg,
                         target_radius=args.target_radius,
                         roi_scale=args.depth_roi_scale,
                         percentile=args.depth_percentile,
+                        refine_with_segmentation=args.refine_with_segmentation,
+                        refine_red_target=args.refine_red_target,
+                        red_min_ratio=args.red_min_ratio,
+                        target_body_id=target_id,
                     )
                     est_target_world = depth_info["center_world_xyz"]
                     est_target_xy = est_target_world[:2].copy()
@@ -1000,10 +1438,27 @@ def main():
                 print(f"  Estimated target xyz: {np.round(est_target_world, 4)}")
                 print(
                     f"  Perception xy error: {np.linalg.norm(est_target_world[:2] - gt_target_xy):.4f} m "
-                    f"(surface-vp check {depth_info['surface_vs_vp_error_m']:.4f} m)"
+                    f"(surface-vp check {depth_info['surface_vs_vp_error_m']:.4f} m, "
+                    f"mode={depth_info.get('refinement_mode', 'unknown')})"
                 )
             else:
                 print(f"  Detection: none ({skip_reason})")
+
+            if args.draw_debug:
+                overlay_bgr = make_detection_overlay(
+                    rgb_image=rgb_image,
+                    chosen_detection=chosen_detection,
+                    all_detections=all_detections,
+                    depth_info=depth_info,
+                    gt_target_xy=gt_target_xy,
+                    est_target_world=est_target_world,
+                )
+                show_detection_overlay(debug_window_name, overlay_bgr, wait_ms=1)
+                if video_recorder is not None and args.record_mode == "overlay":
+                    for _ in range(max(1, int(round(args.record_fps * 0.5)))):
+                        video_recorder.write_bgr(overlay_bgr)
+            elif video_recorder is not None and args.record_mode == "camera":
+                video_recorder.write_bgr(np.ascontiguousarray(rgb_image[:, :, ::-1]))
 
             if args.save_debug_frames:
                 frame_base = os.path.join(frames_dir, f"throw_{throw_idx + 1:03d}")
@@ -1060,10 +1515,36 @@ def main():
                         physicsClientId=client,
                     )
 
-                speed = get_speed(policy_obj, release_pos, used_target_xy)
-                speed = min(float(speed) * float(args.speed_scale), float(uM))
+                speed_choice = choose_speed_for_target(
+                    speed_strategy=args.speed_strategy,
+                    policy_obj=policy_obj,
+                    throwing_system=search_throwing_system,
+                    release_pos=release_pos,
+                    target_xy=used_target_xy,
+                    u_min=search_u_min,
+                    u_max=float(uM),
+                    dt=Ts,
+                    flight_time=T,
+                    speed_scale=float(args.speed_scale),
+                    grid_size=int(args.search_grid_size),
+                    refine_steps=int(args.search_refine_steps),
+                    refine_width=float(args.search_refine_width),
+                )
+                speed = speed_choice["speed"]
                 print(f"  Policy target xy: {np.round(used_target_xy, 4)}")
-                print(f"  Policy speed: {speed:.4f} m/s")
+                print(
+                    f"  Speed strategy: requested={args.speed_strategy}, used={speed_choice['strategy_used']}, "
+                    f"speed={speed:.4f} m/s"
+                )
+                print(
+                    f"  Policy speed={speed_choice['policy_speed']:.4f} m/s "
+                    f"(pred err {speed_choice['policy_error_pred_m']:.4f} m)"
+                )
+                if speed_choice["search_best_speed"] is not None:
+                    print(
+                        f"  Search best speed={speed_choice['search_best_speed']:.4f} m/s "
+                        f"(pred err {speed_choice['search_error_pred_m']:.4f} m)"
+                    )
 
                 throw_result = execute_throw(
                     client_id=client,
@@ -1079,6 +1560,8 @@ def main():
                     direct_mode=args.direct,
                     slow_factor=args.slow,
                     draw_debug=args.draw_debug,
+                    camera_cfg=camera_cfg,
+                    frame_callback=(video_recorder.write_bgr if video_recorder is not None else None),
                 )
 
                 if throw_result["landing"] is not None:
@@ -1114,7 +1597,12 @@ def main():
                 "used_target_x": None if used_target_xy is None else float(used_target_xy[0]),
                 "used_target_y": None if used_target_xy is None else float(used_target_xy[1]),
                 "used_ground_truth_fallback": used_gt_fallback,
-                "policy_speed_mps": speed,
+                "speed_strategy_requested": args.speed_strategy,
+                "speed_strategy_used": None if throw_result is None else speed_choice["strategy_used"],
+                "policy_speed_mps": None if throw_result is None else speed_choice["policy_speed"],
+                "policy_predicted_error_m": None if throw_result is None else speed_choice["policy_error_pred_m"],
+                "search_best_speed_mps": None if throw_result is None else speed_choice["search_best_speed"],
+                "search_predicted_error_m": None if throw_result is None else speed_choice["search_error_pred_m"],
                 "planned_vx": None if throw_result is None else float(throw_result["v_cmd"][0]),
                 "planned_vy": None if throw_result is None else float(throw_result["v_cmd"][1]),
                 "planned_vz": None if throw_result is None else float(throw_result["v_cmd"][2]),
@@ -1138,6 +1626,10 @@ def main():
 
             if throw_result is not None and args.draw_debug:
                 time.sleep(1.0 * args.slow if not args.direct else 0.0)
+                if video_recorder is not None:
+                    tail_frame = make_camera_frame_bgr(client, camera_cfg, args.direct)
+                    for _ in range(max(1, int(round(args.record_fps * 0.5)))):
+                        video_recorder.write_bgr(tail_frame)
 
             p.removeBody(target_id, physicsClientId=client)
             if throw_result is not None:
@@ -1168,10 +1660,21 @@ def main():
             except KeyboardInterrupt:
                 pass
     finally:
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+        if video_recorder is not None:
+            video_recorder.close()
         if log_id is not None:
             p.stopStateLogging(log_id, physicsClientId=client)
         if p.isConnected(client):
             p.disconnect(client)
+        if old_sigint is not None:
+            try:
+                signal.signal(signal.SIGINT, old_sigint)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

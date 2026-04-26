@@ -33,6 +33,7 @@ class RobotProfile:
     position_gain: float = 2.0
     velocity_gain: float = 1.0
     force_scale: float = 1.5
+    control_mode: str = "position"
     notes: str = ""
 
 
@@ -50,6 +51,7 @@ _PROFILES: Dict[str, RobotProfile] = {
         position_gain=2.0,
         velocity_gain=1.0,
         force_scale=1.5,
+        control_mode="position",
         notes="Original mc-pilot-pybullet baseline arm.",
     ),
     "franka_panda": RobotProfile(
@@ -65,6 +67,7 @@ _PROFILES: Dict[str, RobotProfile] = {
         position_gain=0.6,
         velocity_gain=0.3,
         force_scale=0.5,
+        control_mode="position",
         notes="7-DoF Franka arm; EE link is the hand reached through fixed joints after joint 7.",
     ),
     "xarm6": RobotProfile(
@@ -80,6 +83,7 @@ _PROFILES: Dict[str, RobotProfile] = {
         position_gain=1.5,
         velocity_gain=0.7,
         force_scale=1.0,
+        control_mode="kinematic",
         notes="6-DoF xArm; index 0 is a fixed world joint so the actuated chain starts at joint 1.",
     ),
 }
@@ -112,6 +116,7 @@ def profile_to_dict(profile: RobotProfile) -> dict:
         "position_gain": profile.position_gain,
         "velocity_gain": profile.velocity_gain,
         "force_scale": profile.force_scale,
+        "control_mode": profile.control_mode,
         "notes": profile.notes,
     }
 

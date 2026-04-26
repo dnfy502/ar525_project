@@ -55,7 +55,7 @@ for name, script, cli_args in experiments:
     print(f"{'─' * 60}")
 
     t0 = time.time()
-    cmd = [sys.executable, script] + cli_args.split()
+    cmd = [sys.executable, script] + cli_args.split() + ["--resume"]
     result = subprocess.run(cmd, capture_output=False)
     elapsed = time.time() - t0
 

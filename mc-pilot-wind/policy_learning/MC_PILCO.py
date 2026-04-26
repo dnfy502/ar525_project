@@ -263,3 +263,49 @@ class MC_PILOT_Wind(MC_PILOT):
             inputs_sequence_list.append(zero_input)
 
         return torch.stack(states_sequence_list), torch.stack(inputs_sequence_list)
+
+    def load_model_from_log(self, num_trial, num_explorations=10, folder="results_tmp/1/"):
+        """
+        Load model of trial: num_trial from log file inside 'folder'.
+        Fixed to account for num_explorations > 1.
+        """
+        log_file_path = folder + "log.pkl"
+        print("\nLoading model from: " + log_file_path)
+
+        log_dict = pkl.load(open(log_file_path, "rb"))
+        self.log_dict = log_dict
+
+        self.log_dict["cost_trial_list"] = self.log_dict["cost_trial_list"][0:num_trial]
+        self.log_dict["parameters_trial_list"] = self.log_dict["parameters_trial_list"][0:num_trial]
+        self.log_dict["particles_states_list"] = self.log_dict["particles_states_list"][0:num_trial]
+        self.log_dict["particles_inputs_list"] = self.log_dict["particles_inputs_list"][0:num_trial]
+
+        # Load all explorations plus the completed control trials
+        num_to_load = num_explorations + num_trial
+        for j in range(num_to_load):
+            print("\nGet data from trajectory: " + str(j) + "/" + str(num_to_load))
+            state_samples = log_dict["state_samples_history"][j]
+            input_samples = log_dict["input_samples_history"][j]
+            noiseless_state_samples = log_dict["noiseless_states_history"][j]
+            # add samples history
+            self.state_samples_history.append(state_samples)
+            self.input_samples_history.append(input_samples)
+            self.noiseless_states_history.append(noiseless_state_samples)
+            self.num_data_collection += 1
+            # add data to model_learning object
+            self.model_learning.add_data(new_state_samples=state_samples, new_input_samples=input_samples)
+
+        # The last completed trial index for GP is num_explorations + num_trial - 2
+        trial_index = num_explorations + num_trial - 2
+
+        # load gp models of trial: trial_index
+        print("\nGet parameters for GP trial index:", trial_index)
+        self.model_learning.gp_inputs = log_dict["gp_inputs_" + str(trial_index)]
+        self.model_learning.gp_output_list = log_dict["gp_output_list_" + str(trial_index)]
+        for k in range(self.model_learning.num_gp):
+            self.model_learning.gp_list[k].load_state_dict(log_dict["parameters_gp_" + str(trial_index)][k])
+
+        # pre-train gp models
+        for k in range(self.model_learning.num_gp):
+            self.model_learning.pretrain_gp(k)
+

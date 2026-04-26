@@ -41,6 +41,8 @@ p.add_argument("-alpha",       type=float, default=0.7,
                help="temporal correlation coefficient")
 p.add_argument("-wind_aware",  type=int,   default=0)
 p.add_argument("--pybullet",   action="store_true")
+p.add_argument("--resume",     action="store_true",
+               help="Resume from previous log in log_path")
 args = p.parse_known_args()[0]
 seed = args.seed
 num_trials = args.num_trials
@@ -141,10 +143,11 @@ if wind_aware:
     centers_init = np.column_stack([
         np.random.uniform(lm * np.cos(-gM), lM, Nb),
         np.random.uniform(lm * np.sin(-gM), lM * np.sin(gM), Nb),
-        np.random.uniform(-1.0, 1.0, Nb),
-        np.random.uniform(-1.0, 1.0, Nb),
+        np.random.uniform(w_mean_x - 2*sigma, w_mean_x + 2*sigma, Nb),
+        np.random.uniform(-2*sigma, 2*sigma, Nb),
     ])
-    lengthscales_init = np.array([0.08, 0.08, 0.3, 0.3])
+    lw = 0.15 * (4 * sigma)
+    lengthscales_init = np.array([0.08, 0.08, lw, lw])
     control_policy_par = {
         "full_state_dim": STATE_DIM, "target_dim": TARGET_DIM,
         "wind_dim": WIND_DIM, "num_basis": Nb, "u_max": uM,
@@ -242,11 +245,36 @@ pkl.dump(config_log, open(log_path + "/config_log.pkl", "wb"))
 
 print(f"\nW3 Turbulence: mean={w_mean_x}, sigma={sigma}, alpha={turb_alpha}, "
       f"aware={wind_aware}, seed={seed}")
-cost_trial_list, _, _ = mc_pilot_obj.reinforce(
+
+if args.resume:
+    log_file_path = os.path.join(log_path, "log.pkl")
+    if os.path.exists(log_file_path):
+        import pickle
+        log_dict = pickle.load(open(log_file_path, "rb"))
+        num_completed = len(log_dict.get("cost_trial_list", []))
+        if num_completed > 0:
+            print(f"\nResuming from trial {num_completed} (Control trial index).")
+            mc_pilot_obj.load_model_from_log(
+                num_trial=num_completed, 
+                num_explorations=Nexp, 
+                folder=log_path + "/"
+            )
+        else:
+            print("\nNo completed trials found to resume from. Starting fresh.")
+    else:
+        print("\nNo log file found to resume from. Starting fresh.")
+
+reinforce_kwargs = dict(
     initial_state=initial_state, initial_state_var=initial_state_var,
     T_exploration=T, T_control=T, num_trials=num_trials,
     num_explorations=Nexp,
     model_optimization_opt_list=[model_optimization_opt_dict] * num_gp,
     policy_optimization_dict=policy_optimization_dict,
 )
+
+if args.resume and 'num_completed' in locals() and num_completed > 0:
+    reinforce_kwargs["loaded_model"] = True
+    reinforce_kwargs["num_trials"] = max(0, num_trials - num_completed)
+
+cost_trial_list, _, _ = mc_pilot_obj.reinforce(**reinforce_kwargs)
 print(f"\nTraining complete. Final cost: {cost_trial_list[-1][-1]:.4f}")

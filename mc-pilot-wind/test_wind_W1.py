@@ -44,6 +44,8 @@ p.add_argument("-wind_aware",  type=int,   default=0,
                help="1=10-D state with wind input, 0=8-D blind")
 p.add_argument("--pybullet",   action="store_true",
                help="Run physics in PyBullet instead of numpy")
+p.add_argument("--resume",     action="store_true",
+               help="Resume from previous log in log_path")
 args = p.parse_known_args()[0]
 seed = args.seed
 num_trials = args.num_trials
@@ -187,8 +189,8 @@ if wind_aware:
     centers_init = np.column_stack([
         np.random.uniform(lm * np.cos(-gM), lM, Nb),
         np.random.uniform(lm * np.sin(-gM), lM * np.sin(gM), Nb),
-        np.random.uniform(-1.0, 1.0, Nb),  # wind wx centers
-        np.random.uniform(-1.0, 1.0, Nb),  # wind wy centers
+        np.random.uniform(wind_speed - 0.1, wind_speed + 0.1, Nb),  # wind wx centers
+        np.random.uniform(-0.1, 0.1, Nb),  # wind wy centers
     ])
     weight_init = uM * (np.random.rand(1, Nb) - 0.5)
     lengthscales_init = np.array([0.08, 0.08, 0.3, 0.3])
@@ -354,6 +356,27 @@ pkl.dump(config_log, open(log_path + "/config_log.pkl", "wb"))
 # Run
 # ---------------------------------------------------------------------------
 print(f"\nW1 Constant Wind: speed={wind_speed} m/s, aware={wind_aware}, seed={seed}")
+
+if args.resume:
+    log_file_path = os.path.join(log_path, "log.pkl")
+    if os.path.exists(log_file_path):
+        import pickle
+        log_dict = pickle.load(open(log_file_path, "rb"))
+        num_completed = len(log_dict.get("cost_trial_list", []))
+        if num_completed > 0:
+            print(f"\nResuming from trial {num_completed} (Control trial index).")
+            mc_pilot_obj.load_model_from_log(
+                num_trial=num_completed, 
+                num_explorations=Nexp, 
+                folder=log_path + "/"
+            )
+            reinforce_param_dict["loaded_model"] = True
+            reinforce_param_dict["num_trials"] = max(0, num_trials - num_completed)
+        else:
+            print("\nNo completed trials found to resume from. Starting fresh.")
+    else:
+        print("\nNo log file found to resume from. Starting fresh.")
+
 cost_trial_list, particles_states_list, particles_inputs_list = mc_pilot_obj.reinforce(
     **reinforce_param_dict
 )

@@ -5,6 +5,24 @@ AR525 Group-3, IIT Mandi
 
 ## Baseline Bugs Fixed
 
+### Documentation Update: Mentor meeting crash brief (LaTeX)
+- **Files:** `mentor_meeting_brief.tex`, `change_history.md`
+- **Problem:** A complete but concise handover was needed for mentor discussion so a teammate with no prior participation can answer technical and implementation-level questions confidently.
+- **Change:** Added a compact LaTeX briefing that covers architecture, code map, algorithm flow, key equations, critical failure modes and fixes, result summary across configs, scope limitations, rapid Q&A, and runnable commands, including real code snippets and pseudocode.
+- **Result:** The repository now has a ready-to-compile mentor prep document with high-density technical coverage for defense-style questioning.
+
+### Documentation Update: Repository-verified Graphify map and file crosswalk
+- **Files:** `graphify-out/graph.html`, `graphify-out/graph.json`, `graphify-out/GRAPH_REPORT.md`, `change_history.md`
+- **Problem:** The previous Graphify architecture view reflected an idealized four-folder layout from the report, but this checkout currently contains `mc-pilot/` and `mc-pilot-elevated/` as primary project folders, with pybullet-related scripts located inside `mc-pilot/`. This made it hard to trace report claims to concrete files.
+- **Change:** Rebuilt Graphify outputs to be repo-verified, explicitly marking which sub-project folders/files are present vs report-mentioned-only in this branch, and added a detailed file-level crosswalk for sub-project mapping, failure-mode fix locations, shared core modules, stratified exploration implementation, and wind-state augmentation status.
+- **Result:** The Graphify artifacts now provide an accurate, auditable bridge from report architecture to real code locations in the current repository snapshot.
+
+### Documentation Update: Graphify layered architecture diagram refreshed
+- **Files:** `graphify-out/graph.html`, `graphify-out/graph.json`, `graphify-out/GRAPH_REPORT.md`, `change_history.md`
+- **Problem:** The previous Graphify visualization mixed low-level extracted entities and did not clearly present the exact four-subproject architecture, inheritance arrows, shared core files, and wind cross-cutting scope requested for repository communication.
+- **Change:** Replaced Graphify outputs with a curated layered architecture view showing: `mc-pilot/` as the base, `mc-pilot-elevated/` and `mc-pilot-pybullet/` as layer-2 extensions, `mc-pilot-pb-elevated/` as the layer-3 combined branch, plus explicit `shared_across` and wind `modifies` links to all four.
+- **Result:** The Graphify artifacts now communicate the repository structure and dependency relationships directly and unambiguously.
+
 ### Documentation Update: Added report defense checklist
 - **Files:** `report_defense_checklist.md`, `change_history.md`
 - **Problem:** The project had detailed implementation notes and experiment logs, but no defense-focused document explaining how to present the work strongly while staying accurate about scope, contributions, and limitations.

@@ -14,7 +14,7 @@ Typical usage:
   python test_mc_pilot_pb_A_vision.py ^
       --log_path results_mc_pilot_pb_A/1 ^
       --yolo_model C:/models/target_detector.pt ^
-      --target_class_name sports ball ^
+      --target_class_name throw_target ^
       --num_throws 5
 """
 
@@ -58,6 +58,13 @@ def find_local_model_candidates(search_root="."):
     return candidates
 
 
+def prepare_ultralytics_env():
+    config_dir = os.path.abspath(".ultralytics")
+    os.makedirs(config_dir, exist_ok=True)
+    os.environ.setdefault("YOLO_CONFIG_DIR", config_dir)
+    return config_dir
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser("mc-pilot-pybullet vision-based throw test")
     parser.add_argument("--log_path", type=str, required=True, help="path to results/<seed>/ with log.pkl")
@@ -71,7 +78,7 @@ def build_arg_parser():
         "--target_class_name",
         type=str,
         default=None,
-        help="YOLO class name to keep, e.g. 'sports ball'; if unset, use highest-confidence detection",
+        help="YOLO class name to keep, e.g. 'throw_target'; if unset, use highest-confidence detection",
     )
     parser.add_argument(
         "--target_class_id",
@@ -309,9 +316,10 @@ class YoloDetector:
                 "That example path is only a placeholder. Pass the real local path to your detector weights.\n"
                 "Example:\n"
                 "  python test_mc_pilot_pb_A_vision.py --log_path results_mc_pilot_pb_A/1 "
-                "--yolo_model C:/real/path/to/weights.pt --target_class_name \"sports ball\"\n"
+                "--yolo_model C:/real/path/to/weights.pt --target_class_name \"throw_target\"\n"
                 f"{candidate_msg}"
             )
+        prepare_ultralytics_env()
         try:
             from ultralytics import YOLO
         except ImportError as exc:
@@ -912,6 +920,10 @@ def main():
         print(f"Config robot={runtime_cfg['cfg_robot_name']} but running robot={profile.name}")
     print(f"Release position: {np.round(release_pos, 4)}")
     print(f"Target range: lm={lm:.3f}, lM={lM:.3f}, gM={gM:.3f} rad")
+    print(
+        f"Rendered target object: red sphere marker with radius={args.target_radius:.3f} m "
+        "placed at the sampled target position"
+    )
     print(f"Camera eye={np.round(camera_cfg['eye'], 3)} target={np.round(camera_cfg['target'], 3)}")
     print(f"Logging to {output_dir}")
 

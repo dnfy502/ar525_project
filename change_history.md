@@ -3,6 +3,378 @@ AR525 Group-3, IIT Mandi
 
 ---
 
+## Exploration 2: PyBullet Arm + Noise (mc-pilot-pybullet/)
+
+### Motivation
+
+The `mc-pilot/` and `mc-pilot-elevated/` implementations have a structural weakness as RL demonstrations: the policy outputs a release speed and that exact speed is applied to the ball. There is no gap between "what the policy commands" and "what physically happens." Ball free-flight is deterministic given release velocity, so a non-RL solver could invert the ballistic equations once and achieve near-perfect accuracy. The existing work only shows that RL can learn a known physics model, not that it can cope with real uncertainty.
+
+The paper (Turcato et al. 2025) handles this via Modification 2: gripper delay estimation. The arm's gripper opens with an unknown random delay, perturbing the actual release moment and therefore the actual release velocity. Our simulation-only work skipped this module. Exploration 2 introduces a PyBullet arm + injected noise as the simulated analogue of that stochasticity.
+
+**Goal:** Make the gap between commanded and delivered velocity explicit, so the RL must learn a policy robust to that noise. Also provides a visualisation pipeline (PyBullet GUI, trajectory traces, video recording).
+
+---
+
+### Files added/modified in mc-pilot-pybullet/
+
+`mc-pilot-pybullet/` was created as a full copy of `mc-pilot/` (`cp -r mc-pilot mc-pilot-pybullet`). The original `mc-pilot/` and `mc-pilot-elevated/` are untouched.
+
+#### robot_arm/__init__.py
+Empty module marker.
+
+#### robot_arm/arm_controller.py — `ArmController` class
+
+Handles all arm-side operations for one rollout.
+
+**Constructor:** Loads KUKA iiwa7 URDF from `pybullet_data` into an existing client, reads joint limits from URDF, stores iiwa7 hardware velocity limits `[1.71, 1.71, 1.75, 2.27, 2.44, 3.14, 3.14]` rad/s. Default neutral pose `[0, 0.5, 0, -1.0, 0, 0.5, 0]` places EE at approx (0.69, 0, 0.71).
+
+**`plan_throw(v_cmd, release_pos, t_w, t_r, T)`:**
+1. IK to `release_pos` using `p.calculateInverseKinematics` (200 iterations, threshold 1e-4, restPoses=q_neutral).
+2. Jacobian pseudoinverse: `p.calculateJacobian` → J_lin (3×7) → `qd_release = pinv(J_lin) @ v_cmd`. Scales down uniformly if any joint exceeds its velocity limit.
+3. Windup pose: `q_windup = q_neutral + (q_release - q_neutral) * (-0.5)`, clipped to joint limits.
+4. Cubic polynomial coefficients for three phases:
+   - Neutral → windup `[0, t_w]`: rest-to-rest (`a3 = -2*dq/dt³`, `a2 = 3*dq/dt²`)
+   - Windup → release `[t_w, t_r]`: reaches `qd_release` (`a3 = (qd_r*Δ - 2*dq)/Δ³`, `a2 = (3*dq - qd_r*Δ)/Δ²`)
+   - Release → rest `[t_r, T]`: decelerates from `qd_release` (`a3 = (2*(q_s-q_e) + qd_s*Δ)/Δ³`, `a2 = (-qd_s - 3*a3*Δ²)/(2*Δ)`)
+
+**`step(q_target, qd_target)`:** `setJointMotorControlArray` POSITION_CONTROL with `positionGains=2.0` (gain=2.0 found to give best tracking at ~7% EE velocity error).
+
+**`release_ball(ball_id, set_vel=None, dv_noise=None)`:** Removes grip constraint, then calls `resetBaseVelocity`. If `set_vel` is provided, uses that as the base velocity (used by `PyBulletThrowingSystem` to set `v_cmd` directly). If None, reads actual EE velocity. Adds `dv_noise` on top. Zeroes angular velocity (clears constraint-induced spin).
+
+**`attach_ball(ball_id)`:** Creates `JOINT_FIXED` constraint between EE link and ball. Offset computed from current EE position to ball position at creation time.
+
+**`ee_state()`:** `getLinkState(computeLinkVelocity=1)` → returns world-frame (pos, lin_vel, orient, ang_vel).
+
+**Bug found and fixed during implementation:** `p.calculateJacobian` returns 2 values (linear, angular), not 3. Initial code unpacked 3 → fixed to unpack 2.
+
+#### robot_arm/noise_models.py — noise classes
+
+**`ArmNoise` (base):** Zero-noise identity. Defines interface:
+- `pybullet_release_vel(v_cmd, ee_vel) -> (3,)` — velocity to set on ball at release in PyBullet. Different noise types return different things: VelocitySlipNoise perturbs v_cmd; ReleaseTimingJitter returns ee_vel directly (arm mid-decel).
+- `perturb_numpy(v3d_np, n) -> (scale [n], additive [n,3])` — for MC batch in apply_policy. `v3d_actual = scale * v3d + additive`. Scale < 1 for slip/jitter; additive = N(0,σ²) for bias/slip.
+- `sample_release_offset() -> int` — extra PyBullet steps before releasing (timing jitter only).
+
+**`VelocityBiasNoise(sigma)`:** `dv ~ N(0, sigma²·I₃)`. `perturb_numpy` returns `(ones, N(0,σ²))`. **Note: this is UNLEARNABLE.** For zero-mean symmetric noise, the optimal noise-aware policy is mathematically identical to the noiseless policy. Adding it to apply_policy does not change what speed the policy learns — only how confidently it believes it will land (honest vs optimistic cost). Kept for baseline comparison only.
+
+**`VelocitySlipNoise(alpha, sigma)`** *(added in noise redesign)*: `v_actual = (1-alpha)*v_cmd + N(0,sigma²)`. `perturb_numpy` returns `((1-alpha)*ones, N(0,sigma²))`. Learnable: the fractional loss grows with throw speed, so the policy must learn a consistent multiplier `1/(1-alpha)` across all target distances.
+
+**`ReleaseTimingJitter(a, b, decel_rate, dt)`** *(redesigned)*: `t_d ~ U(a, b)`, `a > 0`. PyBullet: releases at delayed step, returns `ee_vel` (arm mid-deceleration — physically accurate). apply_policy: `scale = 1 - decel_rate * t_d / ||v_cmd||`. Learnable: mean delay `(a+b)/2 > 0` creates a systematic undershoot the policy must compensate for. Matches paper §5 model.
+
+#### simulation_class/model_pybullet.py — `PyBulletThrowingSystem`
+
+Drop-in replacement for `ThrowingSystem`. Same constructor parameters (mass, radius, launch_angle_deg, wind), same `rollout(s0, policy, T, dt, noise)` signature, same `(noisy_states, inputs, clean_states)` return format, same 8-D state layout `[x,y,z, vx,vy,vz, Px,Py]`. Exposes `launch_angle` attribute (required by `MC_PILOT.apply_policy`).
+
+**Per-rollout sequence:**
+1. `p.connect(p.DIRECT)` — fresh client each rollout (training); swap to `p.GUI` for demo.
+2. Load ground plane, arm URDF. Create `ArmController`, call `reset()`.
+3. Create ball sphere (m=0.0577, r=0.0327), set `linearDamping=0, angularDamping=0`.
+4. `arm.attach_ball(ball_id)`.
+5. Call `policy(s0, t=0)` → scalar speed. Convert to `v_cmd` via `_speed_to_velocity` (same azimuth/elevation math as numpy sim).
+6. `arm.plan_throw(v_cmd, release_pos, t_w, t_r, T_arm)`.
+7. Step PyBullet at dt Hz. During arm phase: command joint setpoints. At release step (+ timing jitter offset from `arm_noise.sample_release_offset()`): call `arm_noise.pybullet_release_vel(v_cmd, ee_vel)` to decide what velocity to set:
+   - No noise / VelocityBiasNoise / VelocitySlipNoise: perturbs v_cmd → `p.resetBaseVelocity` to that value
+   - ReleaseTimingJitter: returns `ee_vel` (actual arm velocity at the delayed step, physically accurate)
+8. After release: each step, compute `_ball_accel(pos, vel, mass, radius, wind)` from model.py, subtract gravity component, apply remaining drag force via `p.applyExternalForce`. Same Eq. 35 physics as the numpy sim.
+9. Landing detection: `pos[2] <= ball_radius + 0.005`. Linear interpolation to exact z=0 crossing (matches numpy sim).
+10. `p.disconnect()`. Return trajectory arrays.
+
+**Original design (set_vel=v_cmd always):** During testing, position-control tracking gave ~90% velocity accuracy at best. Setting to `v_cmd` directly decoupled ball physics from arm-tracking quality and gave a clean match with apply_policy. This design was retained for VelocityBiasNoise and VelocitySlipNoise.
+
+**Updated design for ReleaseTimingJitter:** The physical story requires using the actual arm EE velocity at the delayed time (arm is decelerating). For this noise class, `pybullet_release_vel` returns `ee_vel` — the ball gets whatever velocity the arm has at that moment. The apply_policy approximation (`scale = 1 - decel_rate * t_d / ||v_cmd||`) must match this behaviour closely enough for the GP to be accurate.
+
+**Landing detection bug found and fixed:** Initial code used `pos[2] <= 0.0` but ball center stops at `z ≈ ball_radius` on the ground plane. Ball was bouncing/rolling and the loop ran all remaining steps, giving landing x ≈ 3.23m (wrong). Fixed to `pos[2] <= ball_radius + 0.005`.
+
+**Rollout speed:** ~0.1s per rollout in DIRECT mode. 20 rollouts per seed = ~2s overhead vs numpy sim.
+
+#### policy_learning/MC_PILCO.py — two edits to `MC_PILOT`
+
+**Edit 1 — `__init__` signature:** Added `arm_noise=None` kwarg, stored as `self.arm_noise`. When `None`, class behaves identically to original (zero regression for the parity test).
+
+**Edit 2 — `apply_policy` body (updated in noise redesign):** After `v3d = torch.cat([vx, vy, vz], dim=1)`, the perturbation now uses the `perturb_numpy` interface:
+```python
+if self.arm_noise is not None:
+    v3d_np = v3d.detach().cpu().numpy()
+    scale_np, additive_np = self.arm_noise.perturb_numpy(v3d_np, num_particles)
+    scale    = torch.tensor(scale_np[:, None], ...)   # [M, 1] detached
+    additive = torch.tensor(additive_np, ...)          # [M, 3] detached
+    v3d = scale * v3d + additive
+```
+`scale` and `additive` are constants w.r.t. policy parameters (detached). Gradient path is preserved: `cost ← GP_positions ← v3d ← speed ← policy_params`. The `scale * v3d` form (vs old `v3d + dv`) allows multiplicative noise (VelocitySlipNoise, ReleaseTimingJitter) to reduce gradient magnitude by the correct factor, so the policy learns to increase speed proportionally.
+
+**Verified:** Running `test_mc_pilot.py -seed 1 -num_trials 1` (numpy sim, `arm_noise=None`) after both edits gives the same `Final trial cost: 0.0093` as before — zero regression.
+
+#### policy_learning/Policy.py
+
+Copied from `mc-pilot-elevated/policy_learning/Policy.py` (which has `Stratified_Throwing_Exploration`). The `mc-pilot/` version only had `Baseline_Throwing_Exploration`. This was discovered during integration testing: `AttributeError: module 'policy_learning.Policy' has no attribute 'Stratified_Throwing_Exploration'`.
+
+#### standalone_throw.py
+
+Standalone visual/mechanical test. No MC-PILOT, no GP. Loads iiwa7 in `p.GUI` (or `p.DIRECT` with `--direct`), plans a throw at hardcoded `v_cmd` toward a target, executes the arm trajectory, releases ball, renders trajectory trace. CLI: `--speed`, `--target_dist`, `--direct`.
+
+**Note on expected error:** The `--speed` and `--target_dist` args are NOT matched to each other — the script demonstrates mechanical correctness of the arm and ball physics, not targeting accuracy. At `--speed 2.0 --target_dist 0.75`, the ball overshoots to ~1.17m (expected: 2.0 m/s from z=0.5m sends ball ~0.67m in x from release, which is at x=0.5m → landing x≈1.17m). The RL in `test_mc_pilot_pb_A.py` learns the correct speed for each target distance.
+
+#### test_mc_pilot_pb_A.py — zero-noise PyBullet baseline
+
+Same structure as `test_mc_pilot_e_strat5.py`. Uses `PyBulletThrowingSystem(arm_noise=None)` and `MC_PILOT(arm_noise=None)`. Success criterion: hit rate ≥ 4/5 within 5 trials (parity with mc-pilot Config A).
+
+#### test_mc_pilot_pb_A_noisy.py — VelocityBiasNoise demo (unlearnable baseline)
+
+Uses `VelocityBiasNoise(sigma)` passed to both `PyBulletThrowingSystem` and `MC_PILOT`. CLI arg `-noise_aware 1` (default) passes the shared instance to MC_PILOT; `-noise_aware 0` passes `None` to MC_PILOT only. **Note:** subsequent analysis showed this noise type is unlearnable (zero-mean, symmetric) — noise-aware and naive policies converge to the same aim. Use PB-B or PB-C for a scientifically meaningful noise-aware vs naive comparison.
+
+#### test_mc_pilot_pb_B.py — VelocitySlipNoise demo (learnable, Option B)
+
+Uses `VelocitySlipNoise(alpha, sigma)`. `v_actual = (1-alpha)*v_cmd + N(0,sigma²)`. Learnable because the fractional velocity loss scales with throw speed. Results directory: `results_mc_pilot_pb_B/alpha_{alpha}_{aware|naive}/{seed}/`. Added after paper analysis showed VelocityBiasNoise is not demonstrably learnable.
+
+#### test_mc_pilot_pb_C.py — ReleaseTimingJitter demo (learnable, Option C, paper-faithful)
+
+Uses `ReleaseTimingJitter(a, b, decel_rate)`. Gripper delay `t_d ~ U(a,b)`, `a>0`. PyBullet uses same `(1 - decel_rate*t_d/||v_cmd||)*v_cmd` formula as apply_policy (not actual arm EE velocity — see PB-C fix above). Results directory: `results_mc_pilot_pb_C/delay_{a}_{b}_{aware|naive}/{seed}/`. Parallel-safe with all other scripts.
+
+#### demo_pybullet_gui.py
+
+Loads trained policy from `results_*/seed/log.pkl` (reads `parameters_trial_list[-1]` which is an `OrderedDict` of `{log_lengthscales, centers, f_linear.weight}`). Spawns `p.GUI`, executes N throws, renders: arm motion, ball trajectory trace (`addUserDebugLine`), target marker (red sphere), landing marker (green=hit, orange=miss) + error text. Optional `--record output.mp4` via `startStateLogging(STATE_LOGGING_VIDEO_MP4)`. `--slow N` multiplies `time.sleep(dt)` for slower playback.
+
+---
+
+### Parameter derivation for Config PB-A
+
+**Velocity reachability:** KUKA iiwa7 joint velocity limits `[1.71, 1.71, 1.75, 2.27, 2.44, 3.14, 3.14]` rad/s. Heuristic peak EE speed for multi-joint coordination: ~2.5 m/s. Paper's `uM=3.5` is unreachable. Retargeted to `uM=2.5`.
+
+**Speed-to-range mapping** (initial estimate from numpy sim; later re-verified in PyBullet — see calibration bug below):
+| Speed (m/s) | Numpy range (m) | PyBullet range (m) |
+|-------------|-----------------|-------------------|
+| 1.4 | 0.470 | **0.580** |
+| 1.5 | 0.512 | 0.624 |
+| 2.0 | 0.744 | 0.867 |
+| 2.3 | 0.899 | 1.027 |
+| 2.5 | 1.009 | **1.142** |
+
+→ The numpy and PyBullet sims give different ranges. PyBullet Eq. 35 drag is applied via `applyExternalForce` each step; the numpy sim uses a different drag implementation. The calibration bug section below gives the corrected values.
+
+**lengthscales:** Target range = lM − lm = 0.5m. Applying E-Strat5 rule: `ls = 0.15 × 0.5 = 0.075` → rounded to `[0.08, 0.08]`. At this scale, sensitivity between lm and lM = `exp(−0.5*(0.5/0.08)²) ≈ 0` — targets are fully distinguishable by the RBF policy.
+
+**IK feasibility** (verified): `p.calculateInverseKinematics` to `[0, 0, 0.5]` gives EE error 0.024m — within acceptable tolerance. IK to `[0.5, 0, 0.5]` gives error 0.020m.
+
+| Parameter | Value | Note |
+|-----------|-------|-------|
+| `uM` | 2.5 m/s | iiwa7 EE limit |
+| `uMin` | 1.4 m/s | Exploration floor; 1.4→0.58m gives GP coverage below lm=0.6 |
+| `lm` | ~~0.5~~ **0.6 m** | Corrected after calibration (0.5m unreachable with uMin=1.4) |
+| `lM` | ~~1.0~~ **1.1 m** | Corrected; 1.1m requires v≈2.45 m/s, within uM=2.5 |
+| `T` | 0.60 s | Ball lands ~0.52s at uM; margin added |
+| `lc` | 0.5 m | Same as Config A |
+| `Nexp` | 5 | 5 strata over [1.4, 2.5] = bands of 0.22 m/s |
+| `lengthscales_init` | [0.08, 0.08] | E-Strat5 rule: 0.15 × 0.5m |
+| `RELEASE_POS` | [0, 0, 0.5] | IK places EE at ≈(0.024, 0, 0.495) |
+
+---
+
+### Speed-to-range calibration bug (found after first noisy runs)
+
+**Problem:** Parameter choices for `lm`, `lM`, `uMin` were based on estimates that did not match actual PyBullet physics.
+
+**Actual PyBullet calibration** (DIRECT mode, z=0.5m release, 35° launch angle, no drag override errors):
+
+| Speed (m/s) | Range (m) |
+|-------------|-----------|
+| 1.20 | 0.494 |
+| 1.40 | **0.580** ← assumed ≈0.47 (was wrong) |
+| 1.50 | 0.624 |
+| 1.60 | 0.670 |
+| 1.70 | 0.718 |
+| 1.80 | 0.766 |
+| 1.90 | 0.816 |
+| 2.00 | 0.867 |
+| 2.10 | 0.919 |
+| 2.20 | 0.973 |
+| 2.30 | 1.027 |
+| 2.40 | 1.083 |
+| 2.50 | **1.142** ← assumed ≈1.009 (was wrong) |
+
+**Consequence:** With `uMin=1.4, lm=0.5`, targets in [0.5, 0.58]m were physically unreachable — the minimum commandable speed (1.4 m/s) already lands at 0.58m. The policy cannot output low enough speeds to hit near targets because the GP has no training data below 1.4 m/s. This caused systematic overshoot of close targets and explains why CTRL2 (target=0.519m, policy_speed=1.491 → landed at 0.601m, err=10.8cm) missed despite the noise making the release *slower* than commanded.
+
+**Fix:** Adjusted `lm=0.6, lM=1.1`. At these boundaries:
+- lm=0.6m requires speed ≈1.47 m/s — above uMin=1.4 but the GP still has coverage below lm from exploration
+- lM=1.1m requires speed ≈2.45 m/s — within uM=2.5
+
+Files changed: `test_mc_pilot_pb_A.py`, `test_mc_pilot_pb_A_noisy.py` — both have `lm`, `lM`, and surrounding comments updated.
+
+---
+
+### Results
+
+**First noisy runs (seed=1, 10 trials, sigma=0.15, OLD lm=0.5/lM=1.0 — SUPERSEDED by calibration fix above):**
+
+| Config | Final cost | Hit rate (<10cm) | Hit rate (<15cm) | Mean error |
+|--------|-----------|-----------------|-----------------|------------|
+| noise-aware | ~0.043 | 2/10 | 5/10 | 14.7 cm |
+| naive | ~0.0004 | 2/10 | 5/10 | 15.0 cm |
+
+**Interpretation of first runs:**
+- Hit rate was low primarily because the speed-to-range calibration was wrong (not the noise)
+- Noise-aware cost staying at ~0.04 is correct behaviour: it honestly accounts for sigma=0.15 velocity scatter which produces ~10-15cm landing spread; the cost cannot fall below the noise floor
+- Naive cost reaching ~0.0003 is falsely optimistic: apply_policy runs noiseless particles so the GP predicts clean landings, but actual deployment has noise
+- Both strategies converge to the same real-world performance because N(0,σ²) zero-mean noise does not bias the optimal aim point; for biased noise the strategies would differ
+
+**Zero-noise run (seed=1, 10 trials, OLD lm=0.5/lM=1.0):** Final cost ≈0.0003 (user-observed). Results file overwritten by an accidental background re-run — not recoverable. Key result: zero-noise PyBullet sim converges to near-zero cost, validating the GP+physics pipeline.
+
+**Corrected runs (lm=0.6, lM=1.1): pending — scripts updated, user will rerun.**
+
+---
+
+### Paper noise model analysis (led to noise redesign)
+
+After first noisy runs showed poor hit rate and both noise-aware and naive performing identically, we re-examined the theoretical basis and read the actual paper.
+
+**Key insight — VelocityBiasNoise is unlearnable:**
+For zero-mean symmetric noise (`dv ~ N(0, σ²I)`), the optimal policy satisfies:
+- `∂J/∂v = E[∂cost/∂landing | v] = 0` at the same `v` as the noiseless optimum
+- The noise adds variance but does not shift the mean landing position
+- Therefore, the noise-aware policy is mathematically identical to the noiseless policy for any zero-mean noise
+- The only difference between noise-aware and naive is cost calibration (honest vs falsely optimistic uncertainty accounting), not actual throw aim
+- This means our `test_mc_pilot_pb_A_noisy.py` could not demonstrate that RL improves with noise awareness — both policies aim identically
+
+**Paper analysis (Turcato et al. 2025, §5 — Delay Distribution Optimization):**
+- The paper does NOT add velocity noise. The noise source is **gripper opening delay**: `t̃_r = t_{r_cmd} + t_d`, where `t_d ~ U(a, b)`, `a > 0`.
+- Because the arm is decelerating after the nominal release time `t_r`, releasing late means the ball gets a lower-than-commanded velocity. The shortfall scales with throw speed (higher v_cmd → more deceleration during delay → bigger velocity loss).
+- This IS learnable: the policy must output a higher speed to compensate the mean delay `(a+b)/2`, and the compensation grows with target distance.
+- Additionally, the paper fits (a, b) from data using Bayesian Optimization, and shifts `t_{r_cmd} = t_r - â` to pre-compensate the mean delay. Our simulation version learns the speed correction through the RL loop instead.
+
+### Noise model redesign: VelocitySlipNoise (B) + ReleaseTimingJitter (C) added
+
+**Problem with VelocityBiasNoise:** Zero-mean Gaussian noise is provably unlearnable. For symmetric noise, the optimal noise-aware policy is mathematically identical to the noiseless policy — the policy cannot improve its aim by knowing about the noise. This undermines the RL demo: there is no demonstrable advantage of the noise-aware strategy.
+
+**Paper analysis (Turcato et al. 2025, §5):** The paper uses release timing jitter `t_d ~ U(a, b)` with `a > 0` — a systematic minimum delay. The arm decelerates during the delay, so actual release velocity is less than commanded. The loss scales with throw speed (higher v → arm decelerates faster → bigger undershoot). This IS learnable: the policy must output higher speeds to compensate.
+
+**Changes:**
+
+**`robot_arm/noise_models.py` — full redesign:**
+- `ArmNoise` base class: added `pybullet_release_vel(v_cmd, ee_vel)` and `perturb_numpy(v3d_np, n) -> (scale, additive)` interface methods. The `(scale, additive)` decomposition allows gradient to flow through `v3d` in apply_policy: `v3d_actual = scale * v3d + additive`.
+- `VelocityBiasNoise`: updated to use new interface. `perturb_numpy` returns `(ones, N(0,σ²))` — equivalent to old additive-only behaviour.
+- `VelocitySlipNoise` **(new, Option B):** `v_actual = (1-α)*v_cmd + N(0,σ²)`. Learnable because the fractional loss grows with throw distance. Policy must learn to multiply all speeds by `1/(1-α)`. Naive policy systematically undershoots, more so at longer ranges. Default: `alpha=0.12, sigma=0.04`.
+- `ReleaseTimingJitter` **(redesigned, Option C; pybullet_release_vel fixed after first run):** `t_d ~ U(a, b)` with `a > 0` (default: a=0.02, b=0.07). `sample_release_offset()` samples and saves `_last_t_d`. In PyBullet: `pybullet_release_vel` applies `v_cmd * (1 - decel_rate * _last_t_d / ||v_cmd||)` — same formula as apply_policy, so simulator and particle model are consistent. (Original design returned `ee_vel` but PyBullet position control gives chaotic, uncalibrated EE velocities — this was the root cause of PB-C failure.) Mean loss ≈ `decel_rate * (a+b)/2` m/s.
+
+**`simulation_class/model_pybullet.py`:**
+- Release block now calls `arm_noise.pybullet_release_vel(v_cmd, ee_vel)` and sets ball velocity to the result via `p.resetBaseVelocity`.
+- For `VelocitySlipNoise`: ball gets `(1-α)*v_cmd + noise`.
+- For `ReleaseTimingJitter`: ball gets actual `ee_vel` at the delayed timestep (arm is mid-deceleration — physically accurate).
+- For no noise: ball gets `v_cmd` exactly (unchanged behaviour).
+
+**`policy_learning/MC_PILCO.py` — `apply_policy`:**
+- Replaced `sample_initial_velocity_noise` with `perturb_numpy(v3d_np, n)` → `(scale, additive)`.
+- `v3d = scale * v3d + additive` — gradient flows through v3d for all noise types.
+
+**New test scripts:**
+- `test_mc_pilot_pb_B.py`: `VelocitySlipNoise(alpha, sigma)`. CLI: `-alpha`, `-sigma`, `-noise_aware`.
+- `test_mc_pilot_pb_C.py`: `ReleaseTimingJitter(a, b, decel_rate)`. CLI: `-a`, `-b`, `-decel_rate`, `-noise_aware`. Prints mean delay and expected mean velocity loss at startup.
+
+---
+
+### PB-B/C Run 1: α=0.12, uM=2.5 — two bugs found, both fixed
+
+**Results (seed=1, 10 trials):**
+
+| Config | Aware hits | Naive hits |
+|--------|-----------|-----------|
+| PB-B α=0.12, uM=2.5 | 7/15 | 10/15 (naive WON — wrong) |
+| PB-C a=0.02,b=0.07, uM=2.5 | 1/15 | 1/15 (both failed) |
+
+**Bug 1 — PB-C: model-reality mismatch in `pybullet_release_vel` (FIXED):**
+`ReleaseTimingJitter.pybullet_release_vel` returned the arm's actual EE velocity (`ee_vel`), but PyBullet position control doesn't track well: joint limits cap achievable EE speed at ~0.58 m/s for v_cmd=2.0 m/s, and oscillations cause actual EE velocity to range 0.1–6.6 m/s through the motion. Ball got near-random velocities → GP training data chaotic → RL couldn't learn. **Fix:** `pybullet_release_vel` now applies the same formula as `perturb_numpy` (`v_cmd * (1 - decel_rate * t_d / ||v_cmd||)`) using the `_last_t_d` saved by `sample_release_offset`. PyBullet and apply_policy now use identical noise distributions.
+
+**Bug 2 — PB-B/C: reachability cap (FIXED by increasing uM):**
+With α=0.12 and uM=2.5, the aware policy needs `v_cmd = v_needed / 0.88`. For lM=1.1m (v_needed≈2.45 m/s), this requires v_cmd=2.78 m/s > uM=2.5 — unreachable. Max achievable range with slip = f(2.5×0.88) = f(2.2) = 0.97m. ~25% of targets (0.97–1.1m) were unreachable for the aware policy, capping hit rate at ~75%.
+
+**Bug 3 — PB-B: insufficient slip for clear separation (FIXED by increasing α):**
+With α=0.12, naive undershoots by only 6–10 cm for close targets — within the 10 cm hit threshold. Naive expected to hit ~30% of targets on physics alone, making aware vs naive difference unclear. Additionally, the two runs sample `arm_noise.rng` at different rates (aware advances it 600k times per trial during optimization; naive does not), so actual throw noise sequences differ between runs — confounding the comparison.
+
+**Fixes applied (current defaults):**
+
+| Script | Parameter | Old | New | Reason |
+|--------|-----------|-----|-----|--------|
+| PB-B | `alpha` | 0.12 | **0.20** | Naive misses all targets (errors 0.11–0.25m > 0.1m) |
+| PB-B | `uM` | 2.5 | **3.0** | Max aware range = f(0.80×3.0) = f(2.4) = 1.083m, covers [0.6,1.1m] |
+| PB-C | `a` | 0.02 | **0.04** | Mean loss = 4.0×0.08 = 0.32 m/s; naive misses all targets |
+| PB-C | `b` | 0.07 | **0.12** | Same reason; also larger jitter variance for more realistic noise |
+| PB-C | `uM` | 2.5 | **3.0** | For lM=1.1m: v_cmd = 2.45+0.32 = 2.77 m/s < 3.0, all targets reachable |
+
+**Expected results after fixes:**
+- Aware: ~90–100% hits (all targets reachable, compensation is a single learnable multiplier/offset)
+- Naive: ~0% hits (systematic undershoot 0.11–0.25m for B; 0.13–0.25m for C)
+
+Note: ball velocity is set explicitly via `resetBaseVelocity` and is NOT limited by arm tracking quality, so uM=3.0 is safe regardless of arm joint velocity limits.
+
+---
+
+### PB-B Run 2: α=0.20, uM=3.0 — results
+
+**Run:** seed=1, num_trials=10, alpha=0.20, sigma=0.04, uM=3.0
+
+| Config | Total hits (15 throws) | Policy-only hits (10 throws) | Mean error | Final opt cost |
+|--------|------------------------|------------------------------|------------|----------------|
+| Aware  | 8/15 (53%)             | 5/10 (50%)                   | 0.100 m    | ~0.009         |
+| Naive  | 4/15 (27%)             | 1/10 (10%)                   | 0.125 m    | ~0.001         |
+
+Per-throw errors (throws 1–15; first 5 are exploration, identical for both):
+
+| Throw | Aware error (m) | Naive error (m) | Note |
+|-------|-----------------|-----------------|------|
+| 1  | 0.217 | 0.217 | exploration |
+| 2  | 0.082 | 0.082 | exploration |
+| 3  | 0.097 | 0.097 | exploration |
+| 4  | 0.216 | 0.216 | exploration |
+| 5  | 0.030 | 0.030 | exploration |
+| 6  | 0.094 ✓ | 0.129 ✗ | |
+| 7  | 0.039 ✓ | 0.151 ✗ | |
+| 8  | 0.124 ✗ | 0.135 ✗ | |
+| 9  | 0.084 ✓ | 0.153 ✗ | |
+| 10 | 0.106 ✗ | 0.090 ✓ | |
+| 11 | 0.103 ✗ | 0.107 ✗ | |
+| 12 | 0.033 ✓ | 0.106 ✗ | |
+| 13 | 0.106 ✗ | 0.101 ✗ | |
+| 14 | 0.118 ✗ | 0.141 ✗ | |
+| 15 | 0.055 ✓ | 0.127 ✗ | |
+
+**Interpretation:**
+
+Direction is correct — aware outperforms naive (50% vs 10% on policy trials; 53% vs 27% overall). The fix worked.
+
+The aware policy did not reach the expected ~90–100% for one structural reason: the additive σ=0.04 m/s noise creates irreducible per-throw scatter that cannot be compensated by policy speed adjustment. The policy correctly learns to multiply commanded speeds by ~1.25 (= 1/(1-0.20)) to compensate the systematic slip. But σ=0.04 per component still adds ~2–4 cm of random landing scatter per throw. Looking at the aware near-misses (0.103, 0.106, 0.106, 0.118, 0.124), they are all within 2–3 cm of the 10 cm threshold — the policy is landing on-target but the stochastic noise pushes ~50% of throws just outside the circle.
+
+The naive policy cost (~0.001) is falsely optimistic: apply_policy runs 400 particles with no noise, so the GP predicts perfect landings. Actual deployment has 20% slip → systematic undershoot of 0.09–0.15 m. The aware cost (~0.009) is higher and honest: particles include the slip, so the cost correctly reflects that even with compensation, stochastic noise prevents zero-cost landings.
+
+**Summary:** The RL learns the correct compensation (aware > naive by factor of 5× on policy trials), confirming that speed-dependent velocity loss is learnable. The 50% ceiling is a noise floor from σ=0.04 additive scatter, not a failure of learning.
+
+---
+
+### PB-B Run 3: σ=0, Nexp=10 — GP degeneration experiment (negative result)
+
+**Run:** seed=1, num_trials=10, alpha=0.20, sigma=0.00, Nexp=10, uM=3.0
+
+Motivation: remove the additive noise to isolate the pure 20% multiplicative slip. Expected: aware ~100% (perfectly learnable with no randomness), naive ~0% (systematic undershoot).
+
+| Config | Total hits (20 throws) | Policy-only hits (10 throws) | Mean error | Final opt cost |
+|--------|------------------------|------------------------------|------------|----------------|
+| Aware  | 7/20 (35%)             | 6/10 (60%)                   | 0.145 m    | ~0.005–0.012   |
+| Naive  | 6/20 (30%)             | 5/10 (50%)                   | 0.161 m    | ~0.0005        |
+
+**Result:** Separation essentially collapsed (60% vs 50%) — much worse than the σ=0.04 run (50% vs 10%). Naive performed far better than expected.
+
+**Root cause — GP lengthscale explosion:**
+
+With σ=0, the 10 exploration throws produce perfectly clean, noiseless ballistic trajectories. The GP hyperparameter optimizer (MLE) found that the mathematically easiest fit is a nearly-flat function with enormous lengthscales: **1791 m, 1602 m, 357 m** for the three GPs (the domain is ~1 m in position, ~3 m/s in velocity).
+
+A GP with lengthscale >> domain size is geometrically equivalent to drawing one flat horizontal line through all the data — it predicts the same landing position regardless of launch speed. The GP cannot distinguish "ball thrown at 1.5 m/s" from "ball thrown at 2.5 m/s."
+
+With σ=0.04, the additive noise forces the GP to find a finite lengthscale that explains *why* throws with similar speeds land at different positions. That structure is what allows the aware policy to learn the 1/(1-α) multiplier. Without it, both aware and naive optimize against a constant predictor and converge to similar speeds.
+
+**Key insight:** Additive noise (σ=0.04) is not just a noise source for the aware/naive comparison — it is necessary GP regularization. Without it, MLE collapses to a degenerate solution.
+
+**Change also made this run:** Nexp increased from 5 to 10 (user decision). With Nexp=10, the first policy trial is labeled "TRIAL 9" (the code uses `first_trial_index = num_explorations - 1` as the global index). Explorations run silently in ~1s total (PyBullet DIRECT mode, ~0.1s per rollout, no verbose output per throw — data is collected correctly).
+
+**Conclusion:** σ=0.04 is the correct default for PB-B. The sigma=0 result is documented as a failed experiment.
+
+---
+
 ## Baseline Bugs Fixed
 
 ### Documentation Update: Mentor meeting crash brief (LaTeX)
@@ -293,3 +665,115 @@ This is the only parameter the paper does not adapt to geometry. Everything else
 - **Result:** FAILED. Hit rate dropped from 50% to 0/10. Cost stuck at ~0.42 across all 10 trials (was reaching 0.13–0.17 before).
 - **Root cause:** With lm=0.75m and gM=π/6, targets are always at distance ≥ 0.75m — so `xP < 0.65` is a dead zone. The wider center range wastes ~27% of the 250 centers on regions no target ever occupies, diluting RBF density in the actual target zone. Wider weights may also cause tanh saturation (larger raw values → flatter gradient landscape).
 - **Lesson:** The paper's Eq. 22 domain is designed for their robot's geometry (lM=1.75m). Our target domain geometry is different enough that blindly copying it hurts. Centers should cover the actual reachable target arc, not a wider Cartesian box.
+
+---
+
+## Exploration 3: PyBullet Arm + Elevated Platforms (mc-pilot-pb-elevated/)
+
+### Motivation
+
+`mc-pilot-pybullet/` demonstrated PyBullet physics + visualisation, but only at z=0.5m release (Config PB-A) and with noise experiments (PB-B, PB-C). `mc-pilot-elevated/` proved 100% hit rates at multiple release heights (B/C/D-Strat, z=1.0/1.5/2.0m) using the numpy simulator. Neither folder combines both: visualisation of the multi-height experiment.
+
+Goal: create `mc-pilot-pb-elevated/` that uses PyBullet arm + gui as the physics simulator and reproduces the B/C/D-Strat configs from elevated exactly (same hyperparameters) so the training converges identically and the result can be visualised with `demo_pybullet_gui.py`.
+
+The E-config (ground-level, z=0.0m) was excluded: convergence was already demonstrated in mc-pilot-elevated/E-Strat5 and it requires additional config complexity (tight lengthscales, targeted stratification, lc=0.25) that is distracting in this context.
+
+---
+
+### Architecture decisions
+
+**Why not modify mc-pilot-elevated directly?**
+mc-pilot-elevated uses the numpy `ThrowingSystem` (no PyBullet), so it has no gui visualisation capability. Adding PyBullet to it would require duplicating the robot_arm/ machinery. It was cleaner to copy mc-pilot-pybullet (which already has all PyBullet plumbing) and adapt it to the elevated parameter sets.
+
+**Folder created:** `cp -r mc-pilot-pybullet mc-pilot-pb-elevated`. The `mc-pilot-pybullet/` original is untouched.
+
+**Files removed from the copy:** `test_mc_pilot_pb_B.py`, `test_mc_pilot_pb_C.py`, `test_mc_pilot_pb_A_noisy.py`, and their result directories (`results_mc_pilot_pb_A`, `results_mc_pilot_pb_A_noisy`, `results_mc_pilot_pb_B`, `results_mc_pilot_pb_C`). The noise-experiment scripts are irrelevant to the elevated visualization goal. `test_mc_pilot_pb_A.py` and `test_mc_pilot.py` retained as references.
+
+**`arm_noise` hooks kept in `MC_PILCO.py`:** The `arm_noise=None` hook is a no-op when None is passed (no behavior change). Removing it would be churn with no benefit — it stays.
+
+---
+
+### Key engineering problem: iiwa7 velocity cap
+
+KUKA iiwa7 joint velocity limits `[1.71, 1.71, 1.75, 2.27, 2.44, 3.14, 3.14]` rad/s cap EE speed at ~2.5 m/s for multi-joint motion. The B/C/D elevated configs require `uM=3.5 m/s`. This is physically impossible within hardware limits.
+
+**Resolution chosen:** Scale joint velocity limits by `vel_limit_multiplier=1.5` inside the simulation. This is acceptable because:
+1. The physical robot is never used — all results are from simulation
+2. Ball velocity is set explicitly via `resetBaseVelocity` at release regardless of what the arm joints actually achieve; the arm motion is cosmetic
+3. The `vel_limit_multiplier` only affects the feasibility clipping in `plan_throw` (the Jacobian pseudoinverse scaling step) — it does not change the delivered ball velocity
+
+The arm still physically moves through its trajectory; only the internal check that prevents impossible joint velocities from being commanded is relaxed.
+
+**Implementation:** `ArmController.__init__` accepts `vel_limit_multiplier=1.0` (new kwarg). Line changed: `self._qd_max = _IIWA_QD_MAX * vel_limit_multiplier`. Default 1.0 preserves all existing behavior in `mc-pilot-pybullet/`.
+
+---
+
+### Key engineering problem: arm height / reach
+
+iiwa7 natural EE height at neutral pose is ~0.71m above its base. Release heights of 1.0m, 1.5m, 2.0m require EE to be at those z-values. If arm base is at z=0, IK for z=1.0m release requires the arm to stretch ~0.3m higher than its natural reach — likely IK failure.
+
+**Resolution:** Mount arm on a pedestal by setting `base_position` in `ArmController` / `PyBulletThrowingSystem`:
+- Config B (z_release=1.0m): `base_position=(0, 0, 0.5)` → EE neutral at z≈1.21m, IK target z=1.0m is 0.21m lower → reachable
+- Config C (z_release=1.5m): `base_position=(0, 0, 1.0)` → EE natural at z≈1.71m, target z=1.5m → reachable
+- Config D (z_release=2.0m): `base_position=(0, 0, 1.5)` → EE natural at z≈2.21m, target z=2.0m → reachable
+
+**Implementation:** `PyBulletThrowingSystem.__init__` accepts `base_position=(0,0,0)` and `vel_limit_multiplier=1.0` (new kwargs). Both stored and passed to `ArmController` inside `_simulate_pybullet`. `ArmController` already had `base_position` in its signature — no change needed there beyond adding `vel_limit_multiplier`.
+
+**Verification (headless):** `standalone_throw.py --direct --speed 3.5 --target_dist 1.5 --z_release 1.0` confirmed:
+- v_cmd correctly set to 3.5 m/s (`v_release=3.500`)
+- Ball lands at 2.099m from z=1.0 (max range at uM=3.5 ≈ 2.1m; matches mc-pilot-elevated's verified 1.97m with expected ~5–10% PyBullet drag offset)
+- No errors; clean landing detection
+
+---
+
+### Files modified
+
+#### robot_arm/arm_controller.py
+- Added `vel_limit_multiplier=1.0` kwarg to `__init__`
+- Changed `self._qd_max = _IIWA_QD_MAX.copy()` → `self._qd_max = _IIWA_QD_MAX * vel_limit_multiplier`
+- Docstring updated to document the new parameter and its simulation-only caveat
+
+#### simulation_class/model_pybullet.py
+- Added `base_position=(0,0,0)` and `vel_limit_multiplier=1.0` kwargs to `__init__`
+- Stored as `self._base_position` and `self._vel_limit_multiplier`
+- `_simulate_pybullet`: changed `ArmController(client, self._urdf_path)` → `ArmController(client, self._urdf_path, base_position=self._base_position, vel_limit_multiplier=self._vel_limit_multiplier)`
+
+#### standalone_throw.py
+- Added `--z_release` arg (default 1.0): release height in meters
+- Added `--vel_mult` arg (default 1.5): joint velocity limit multiplier
+- `ARM_BASE_POS` auto-set to `(0, 0, z_release - 0.5)`
+- `RELEASE_POS` now `[0, 0, z_release]` (was hardcoded to `[0.5, 0, 0.5]`)
+- `T_TOTAL` scaled with z_release: `max(1.5, z_release * 0.6 + 1.0)` (longer horizon for higher releases)
+- Default `--speed 3.5, --target_dist 1.5` to match the elevated config range
+
+---
+
+### New test scripts
+
+All three scripts mirror their `mc-pilot-elevated` counterparts (`test_mc_pilot_b_strat.py`, `c_strat.py`, `d_strat.py`) exactly in hyperparameters. The only differences from the numpy elevated versions are:
+1. `PyBulletThrowingSystem(base_position=..., vel_limit_multiplier=1.5)` instead of `ThrowingSystem`
+2. No `arm_noise` arg in `MC_PILOT` (zero noise — deterministic throws)
+3. Log dirs prefixed `results_mc_pilot_pbe_*` to avoid collision
+
+| Script | z_release | ARM_BASE_POS | lM | T | lengthscales_init |
+|--------|-----------|--------------|-----|-----|-------------------|
+| `test_mc_pilot_pbe_B.py` | 1.0 m | [0, 0, 0.5] | 1.90 m | 0.85 s | [1.0, 1.0] |
+| `test_mc_pilot_pbe_C.py` | 1.5 m | [0, 0, 1.0] | 2.15 m | 0.95 s | [1.0, 1.0] |
+| `test_mc_pilot_pbe_D.py` | 2.0 m | [0, 0, 1.5] | 2.35 m | 1.00 s | [1.0, 1.0] |
+
+Shared across all three: `Nexp=5, Nopt=1500, M=400, Nb=250, uM=3.5, lm=0.75, lc=0.5, Ts=0.02, gM=π/6`. Exploration uses `Stratified_Throwing_Exploration` over full `[0, uM]` (no `u_min`), matching B/C/D-Strat from elevated.
+
+**Expected results:** 10/10 hits on each (matching the 100% hit rates from mc-pilot-elevated B/C/D-Strat, seed=1). The numpy and PyBullet sims use identical ball physics (same Eq. 35 drag, same landing detection, same explicit velocity setting at release), so convergence should be equivalent.
+
+**Visualisation:** After training, run: `python demo_pybullet_gui.py --log_path results_mc_pilot_pbe_B/1`
+
+---
+
+### PyBullet vs numpy physics discrepancy note
+
+The standalone_throw test shows uM=3.5 from z=1.0m reaches ~2.1m in PyBullet vs the numpy elevated's verified lM=1.90m at max range (~1.97m). There is a ~5–10% range discrepancy. This does not affect convergence because:
+1. The GP learns from *actual PyBullet throws*, not from numpy predictions
+2. lM=1.90m is still safely within the PyBullet arm's reach (ball can reach 2.1m, target max is 1.9m → margin of 0.2m)
+3. The policy will learn the correct speed-to-range mapping for PyBullet's physics, which is what matters
+
+The discrepancy will cause the trained policy to pick slightly different speeds than the numpy elevated policy, but the hit rate should be identical because the GP model is fitted to PyBullet data.

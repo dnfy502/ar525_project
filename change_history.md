@@ -777,3 +777,162 @@ The standalone_throw test shows uM=3.5 from z=1.0m reaches ~2.1m in PyBullet vs 
 3. The policy will learn the correct speed-to-range mapping for PyBullet's physics, which is what matters
 
 The discrepancy will cause the trained policy to pick slightly different speeds than the numpy elevated policy, but the hit rate should be identical because the GP model is fitted to PyBullet data.
+
+---
+
+## Exploration 4: Noise-Level Sweep + Salt-and-Pepper Noise (mc-pilot-pybullet/)
+
+### Motivation
+
+For paper submission, we needed a reproducible pipeline to generate quantitative comparisons as noise intensity increases, and to add a second noise family (Salt-and-Pepper) beyond the existing Gaussian/slip/timing scripts.
+
+### Files modified/added
+
+- `mc-pilot-pybullet/robot_arm/noise_models.py`
+- `mc-pilot-pybullet/test_mc_pilot_pb_noise_study.py` (new)
+- `mc-pilot-pybullet/run_pb_noise_sweep.py` (new)
+- `change_history.md`
+
+### Changes
+
+1. **Added `SaltAndPepperVelocityNoise` to `noise_models.py`**
+   - Implements sparse impulse outliers on release velocity:
+     - `+spike_scale` with probability `p_spike/2`
+     - `-spike_scale` with probability `p_spike/2`
+     - `0` otherwise
+   - Optional Gaussian background `sigma` retained for mixed-noise studies.
+   - Fully compatible with both rollout and `apply_policy` via `ArmNoise` interface.
+
+2. **Added single-run study script: `test_mc_pilot_pb_noise_study.py`**
+   - Supports `noise_type in {slip, saltpepper}`.
+   - Supports aware vs naive (`-noise_aware 1/0`) using the same script and log structure.
+   - Added backend switch:
+     - `-backend pybullet` (strict)
+     - `-backend numpy`
+     - `-backend auto` (tries pybullet, falls back to numpy)
+   - Added `NoisyThrowingSystem` fallback so the study can still run when PyBullet is blocked by host policy.
+
+3. **Added sweep + reporting script: `run_pb_noise_sweep.py`**
+   - Runs multiple configs/seeds automatically.
+   - Computes metrics from `log.pkl`:
+     - policy hit rate
+     - mean/median/p90 landing error
+     - final optimization cost
+   - Emits publication-ready artifacts:
+     - `noise_sweep_raw_runs.csv`
+     - `noise_sweep_summary.csv`
+     - `noise_sweep_summary.md`
+     - `noise_sweep_slip.png`
+     - `noise_sweep_saltpepper.png`
+
+### Execution note (environment)
+
+PyBullet import failed in this Windows environment due application control policy:
+`ImportError: DLL load failed while importing pybullet: An Application Control policy has blocked this file.`
+
+The sweep therefore ran with backend `numpy` via the new auto-fallback path. This is recorded in each run row (`backend=numpy`) in `noise_sweep_raw_runs.csv`.
+
+### Compact sweep results (seed=1, Nexp=6, num_trials=4, Nopt=220)
+
+| Noise Type | Level | Aware Hit Rate (policy throws) | Naive Hit Rate (policy throws) | Aware Mean Error | Naive Mean Error |
+|-----------|-------|---------------------------------|---------------------------------|------------------|------------------|
+| Slip (`sigma=0.04`) | `alpha=0.10` | 100% (4/4) | 50% (2/4) | 0.0287 m | 0.0979 m |
+| Slip (`sigma=0.04`) | `alpha=0.20` | 100% (4/4) | 0% (0/4) | 0.0219 m | 0.1881 m |
+| Salt-and-Pepper (`spike_scale=0.30`) | `p_spike=0.05` | 100% (4/4) | 75% (3/4) | 0.0292 m | 0.0439 m |
+| Salt-and-Pepper (`spike_scale=0.30`) | `p_spike=0.15` | 50% (2/4) | 50% (2/4) | 0.0914 m | 0.0768 m |
+
+### Interpretation
+
+- **Slip noise shows clear learnability with stronger separation at higher intensity.**
+  - Increasing `alpha` from 0.10 to 0.20 preserves aware performance (100%) while naive collapses (50% -> 0%).
+  - This matches the expected speed-dependent undershoot model.
+
+- **Salt-and-Pepper degrades both methods as impulse rate rises.**
+  - At low impulse rate (`p_spike=0.05`), aware remains better.
+  - At higher impulse rate (`p_spike=0.15`), both converge to similar hit rate (50%), suggesting heavy outlier regimes are not fully corrected by current policy capacity/settings.
+
+- **Cost calibration remains informative.**
+  - Aware final cost is consistently higher than naive, reflecting explicit uncertainty modelling in `apply_policy`.
+
+### Current status
+
+This exploration successfully adds the requested noise-type + noise-intensity study tooling and first dataset. Next paper-grade runs should increase seeds (`>=3`) and trials (`>=10`) using the same scripts to report confidence intervals.
+
+---
+
+## Exploration 5: Paper-Facing Noise Sweep Scripts + Expanded Results (mc-pilot-pybullet/)
+
+### Motivation
+
+The existing noise-study code was useful, but for paper work we needed cleaner entry points:
+- one script for slip-noise sweeps
+- one script for Salt-and-Pepper sweeps
+- one script that merges study folders and emits paper-ready tables/plots
+
+We also wanted a fresh compact dataset inside `mc-pilot-pybullet/` without touching older result folders.
+
+### Files added/modified
+
+- `mc-pilot-pybullet/collect_pb_slip_sweep.py` (new)
+- `mc-pilot-pybullet/collect_pb_saltpepper_sweep.py` (new)
+- `mc-pilot-pybullet/summarize_pb_noise_results.py` (new)
+- `change_history.md`
+
+### What changed
+
+1. **Added clearer sweep launchers**
+   - `collect_pb_slip_sweep.py`
+   - `collect_pb_saltpepper_sweep.py`
+   - Both wrap `run_pb_noise_sweep.py` with paper-friendly defaults and cleaner naming.
+
+2. **Added merged reporting script**
+   - `summarize_pb_noise_results.py`
+   - Merges one or more study roots.
+   - Deduplicates overlapping runs by config/seed.
+   - Writes:
+     - raw CSV
+     - aggregated CSV
+     - Markdown tables
+     - LaTeX tables
+     - trend plots
+     - landing scatter plots for qualitative comparison
+   - Uses Matplotlib `Agg` backend so plots render in this non-GUI environment.
+
+3. **Collected fresh compact paper data**
+   - New study root:
+     - `mc-pilot-pybullet/results_mc_pilot_pb_noise_paper_study/`
+   - New merged report root:
+     - `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/`
+   - New sweep coverage now includes:
+     - Slip noise: `alpha = 0.05, 0.10, 0.15, 0.20`
+     - Salt-and-Pepper noise: `p_spike = 0.05, 0.10, 0.15`
+   - All runs use aware vs naive comparison with the compact config:
+     - `seed=1`
+     - `Nexp=6`
+     - `num_trials=4`
+     - `Nopt=220`
+
+### New report artifacts
+
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/noise_summary.md`
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/noise_summary.tex`
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/slip_summary.md`
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/slip_trends.png`
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/slip_landings.png`
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/saltpepper_summary.md`
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/saltpepper_trends.png`
+- `mc-pilot-pybullet/results_mc_pilot_pb_noise_report_paper/saltpepper_landings.png`
+
+### Compact observations from the merged paper report
+
+- **Slip noise shows the clearest advantage for noise-aware learning.**
+  - At `alpha=0.20`, aware remains `100%` hit rate while naive drops to `0%`.
+  - Mean error improves from `0.1881 m` (naive) to `0.0219 m` (aware).
+
+- **Salt-and-Pepper noise is harsher and less monotonic.**
+  - At `p_spike=0.10`, aware reaches `75%` while naive falls to `25%`.
+  - At `p_spike=0.15`, both are at `50%`, which suggests this impulsive regime is harder for the current compact setup.
+
+### Environment note
+
+Some runs reported a PyBullet import/control-policy issue in this Windows setup, so the study script's existing `auto` backend fallback remains important. The paper-report scripts are designed to summarize whichever backend successfully completed and record that in the raw CSV.

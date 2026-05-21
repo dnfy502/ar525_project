@@ -54,6 +54,8 @@ class PyBulletThrowingSystem:
         if self.wind_model is None:
             from simulation_class.wind_models import WindModel
             self.wind_model = WindModel()
+            
+        self._client = None
 
     def rollout(self, s0, policy, T, dt, noise):
         """
@@ -125,8 +127,12 @@ class PyBulletThrowingSystem:
         Arm moves through the throw; ball velocity is set explicitly at release.
         After release, Eq. 35 drag is applied manually each step.
         """
-        mode = p.GUI if self._gui_mode else p.DIRECT
-        client = p.connect(mode)
+        if self._client is None:
+            mode = p.GUI if self._gui_mode else p.DIRECT
+            self._client = p.connect(mode)
+            
+        client = self._client
+        p.resetSimulation(physicsClientId=client)
         p.setGravity(0, 0, -9.81, physicsClientId=client)
         p.setTimeStep(dt, physicsClientId=client)
         p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=client)
@@ -243,8 +249,6 @@ class PyBulletThrowingSystem:
                     break
 
             p.stepSimulation(physicsClientId=client)
-
-        p.disconnect(client)
 
         if not pos_traj:
             pos_traj = [release_pos.copy()]

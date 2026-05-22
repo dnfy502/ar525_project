@@ -108,8 +108,17 @@ class ArmController:
         self._grip_id = None
         self._attached_ball_id = None
 
-    def attach_ball(self, ball_id):
-        """Weld ball to the end-effector via a fixed constraint."""
+    def attach_ball(self, ball_id, coupled=False):
+        """Weld ball to the end-effector via a fixed constraint.
+
+        Parameters
+        ----------
+        ball_id : int
+            PyBullet body ID of the ball.
+        coupled : bool
+            If True, sets a very high maxForce on the constraint so the ball
+            tracks the EE tightly during the throw motion.
+        """
         ee_pos = self.ee_state()[0]
         ball_pos, _ = p.getBasePositionAndOrientation(ball_id, physicsClientId=self._cid)
         offset = np.array(ball_pos) - np.array(ee_pos)
@@ -125,6 +134,10 @@ class ArmController:
             childFramePosition=[0, 0, 0],
             physicsClientId=self._cid,
         )
+        if coupled:
+            # Stiffen the constraint so ball tracks EE motion tightly
+            p.changeConstraint(self._grip_id, maxForce=1e6,
+                               physicsClientId=self._cid)
         self._attached_ball_id = ball_id
         return self._grip_id
 
@@ -225,6 +238,33 @@ class ArmController:
             physicsClientId=self._cid,
         )
 
+    def step_velocity(self, q_target, qd_target, force_multiplier=3.0):
+        """Command actuated joints with boosted forces for the throw phase.
+
+        Same as step() but with higher max forces, allowing the joints to
+        accelerate harder and track the throw trajectory more faithfully.
+
+        Parameters
+        ----------
+        q_target : (n,)
+            Target joint positions.
+        qd_target : (n,)
+            Target joint velocities.
+        force_multiplier : float
+            Extra multiplier on max joint forces.
+        """
+        p.setJointMotorControlArray(
+            self._arm_id,
+            self._joint_ids,
+            controlMode=p.POSITION_CONTROL,
+            targetPositions=q_target.tolist(),
+            targetVelocities=qd_target.tolist(),
+            positionGains=[self._position_gain] * len(self._joint_ids),
+            velocityGains=[self._velocity_gain] * len(self._joint_ids),
+            forces=(force_multiplier * self._force_scale * self._max_forces).tolist(),
+            physicsClientId=self._cid,
+        )
+
     def release_ball(self, ball_id, set_vel=None, dv_noise=None):
         """
         Remove the grip constraint and optionally override the ball velocity.
@@ -252,6 +292,39 @@ class ArmController:
             physicsClientId=self._cid,
         )
         return release_vel
+
+    def release_ball_coupled(self, ball_id):
+        """Remove the grip constraint and set the ball to the arm's actual EE velocity.
+
+        This is the coupled release: the ball gets whatever velocity the arm
+        physically achieved, not the commanded velocity.  We read the EE link
+        velocity (which reflects true arm dynamics) and apply it to the ball.
+
+        Returns
+        -------
+        actual_vel : (3,)
+            The arm's actual EE velocity at the moment of release.
+        """
+        # Read EE velocity BEFORE removing constraint (arm is still moving)
+        _, ee_vel, _, _ = self.ee_state()
+        actual_vel = np.array(ee_vel, dtype=float)
+
+        # Remove constraint
+        if self._grip_id is not None:
+            p.removeConstraint(self._grip_id, physicsClientId=self._cid)
+            self._grip_id = None
+        if self._attached_ball_id is not None:
+            self._set_ball_collision_with_arm(self._attached_ball_id, enable=True)
+            self._attached_ball_id = None
+
+        # Set ball velocity to the actual EE velocity (not v_cmd)
+        p.resetBaseVelocity(
+            ball_id,
+            linearVelocity=actual_vel.tolist(),
+            angularVelocity=[0.0, 0.0, 0.0],
+            physicsClientId=self._cid,
+        )
+        return actual_vel
 
     def ee_state(self):
         """Query end-effector state in world frame."""

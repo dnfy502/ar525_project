@@ -34,12 +34,16 @@ parser.add_argument("--robot", type=str, default=None, choices=available_robot_n
                     help="robot arm profile to visualize; defaults to config value or kuka_iiwa")
 parser.add_argument("--use_profile_defaults", action="store_true",
                     help="when overriding the robot, use that robot's safer release pose and speed cap")
+parser.add_argument("--coupled", action="store_true",
+                    help="enable coupled mode: ball gets arm's actual EE velocity, not v_cmd")
 parser.add_argument("--num_throws", type=int, default=5, help="number of demo throws")
 parser.add_argument("--slow", type=float, default=1.0, help="playback slowdown factor")
 parser.add_argument("--record", type=str, default=None, help="output .mp4 path")
 parser.add_argument("--seed", type=int, default=42, help="seed for target sampling")
 parser.add_argument("--speed_scale", type=float, default=1.0,
                     help="extra multiplier on the policy speed for GUI stability experiments")
+parser.add_argument("--vel_ctrl_steps", type=int, default=10,
+                    help="number of steps with boosted forces before release (coupled mode)")
 args = parser.parse_args()
 
 np.random.seed(args.seed)
@@ -204,6 +208,47 @@ if args.record:
     log_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, args.record, physicsClientId=client)
     print(f"Recording to {args.record}")
 
+# Persistent visual markers to re-create after each resetSimulation.
+# Each entry is (type, data) where type is 'target', 'landing', 'text', or 'line'.
+persistent_markers = []
+
+
+def _rebuild_scene_visuals():
+    """Re-create all persistent visual markers after a resetSimulation call."""
+    for mtype, mdata in persistent_markers:
+        if mtype == "target":
+            vis = p.createVisualShape(
+                p.GEOM_SPHERE, radius=0.06, rgbaColor=[1, 0, 0, 0.8],
+                physicsClientId=client,
+            )
+            p.createMultiBody(
+                baseMass=0, baseVisualShapeIndex=vis,
+                basePosition=mdata, physicsClientId=client,
+            )
+        elif mtype == "landing":
+            vis = p.createVisualShape(
+                p.GEOM_SPHERE, radius=0.04, rgbaColor=mdata["color"],
+                physicsClientId=client,
+            )
+            p.createMultiBody(
+                baseMass=0, baseVisualShapeIndex=vis,
+                basePosition=mdata["pos"], physicsClientId=client,
+            )
+        elif mtype == "text":
+            p.addUserDebugText(
+                mdata["text"], mdata["pos"],
+                textColorRGB=mdata["color"], textSize=1.5,
+                physicsClientId=client,
+            )
+        elif mtype == "lines":
+            for seg in mdata:
+                p.addUserDebugLine(
+                    seg[0], seg[1],
+                    lineColorRGB=[0, 0.4, 1], lineWidth=2,
+                    physicsClientId=client,
+                )
+
+
 for throw_idx in range(args.num_throws):
     target = sample_target()
     print(f"\nThrow {throw_idx + 1}/{args.num_throws}: target=({target[0]:.3f}, {target[1]:.3f})")
@@ -214,17 +259,33 @@ for throw_idx in range(args.num_throws):
     v_cmd = speed_to_velocity(speed, RELEASE_POS, target)
     print(f"  Policy speed: {speed:.3f} m/s, v_cmd: {np.round(v_cmd, 3)}")
 
-    tgt_vis = p.createVisualShape(
-        p.GEOM_SPHERE, radius=0.06, rgbaColor=[1, 0, 0, 0.8], physicsClientId=client
-    )
-    p.createMultiBody(
-        baseMass=0,
-        baseVisualShapeIndex=tgt_vis,
-        basePosition=[target[0], target[1], 0.03],
+    # Store target marker for persistence
+    persistent_markers.append(("target", [target[0], target[1], 0.03]))
+
+    # --- Full simulation reset to clear stale PD motor controller state ---
+    # Without this, the PD controller retains accumulated commands from the
+    # previous throw's boosted-force phase, causing wild EE velocity
+    # oscillations in coupled mode (observed ratios of 10-12x v_cmd).
+    p.resetSimulation(physicsClientId=client)
+    p.setGravity(0, 0, -9.81, physicsClientId=client)
+    p.setTimeStep(DT, physicsClientId=client)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=client)
+    p.loadURDF("plane.urdf", physicsClientId=client)
+
+    # Re-create arm from scratch
+    arm = ArmController(client, urdf_path, robot_name=profile.name)
+    arm.reset()
+
+    # Re-create all persistent visual markers from previous throws
+    _rebuild_scene_visuals()
+
+    p.resetDebugVisualizerCamera(
+        cameraDistance=2.0, cameraYaw=45, cameraPitch=-30,
+        cameraTargetPosition=[float(RELEASE_POS[0]), float(RELEASE_POS[1]),
+                              max(0.25, float(RELEASE_POS[2]) * 0.7)],
         physicsClientId=client,
     )
 
-    arm.reset()
     p.stepSimulation(physicsClientId=client)
     time.sleep(0.3 * args.slow)
 
@@ -242,20 +303,29 @@ for throw_idx in range(args.num_throws):
     )
     p.changeDynamics(ball_id, -1, linearDamping=0, angularDamping=0, physicsClientId=client)
 
-    arm.attach_ball(ball_id)
+    arm.attach_ball(ball_id, coupled=args.coupled)
     coeffs, _, _, _ = arm.plan_throw(v_cmd, RELEASE_POS, T_W, T_R, T_ARM)
 
     released = False
     ball_positions = []
     n_steps = int(T_ARM / DT) + int(T / DT) + 20
+    release_step = int(T_R / DT)
 
     for step in range(n_steps):
         t = step * DT
         if not released:
             q_t, qd_t = arm.get_setpoint(coeffs, t)
-            arm.step(q_t, qd_t)
+            if args.coupled and step >= release_step - args.vel_ctrl_steps:
+                arm.step_velocity(q_t, qd_t)
+            else:
+                arm.step(q_t, qd_t)
             if t >= T_R:
-                release_vel = arm.release_ball(ball_id, set_vel=v_cmd)
+                if args.coupled:
+                    release_vel = arm.release_ball_coupled(ball_id)
+                    print(f"  Coupled release: |v_ee|={np.linalg.norm(release_vel):.3f} m/s "
+                          f"(cmd={np.linalg.norm(v_cmd):.3f}, ratio={np.linalg.norm(release_vel)/max(np.linalg.norm(v_cmd),1e-6):.3f})")
+                else:
+                    release_vel = arm.release_ball(ball_id, set_vel=v_cmd)
                 print(f"  Released at t={t:.3f}s with |v|={np.linalg.norm(release_vel):.3f} m/s")
                 released = True
         else:
@@ -312,6 +382,20 @@ for throw_idx in range(args.num_throws):
             textSize=1.5,
             physicsClientId=client,
         )
+
+        # Store landing markers and trajectory lines for persistence
+        persistent_markers.append(("landing", {"pos": landing.tolist(), "color": color}))
+        persistent_markers.append(("text", {
+            "text": f"Err: {error * 100:.1f}cm",
+            "pos": (landing + np.array([0, 0, 0.15])).tolist(),
+            "color": color[:3],
+        }))
+        if len(ball_positions) > 1:
+            line_segments = [
+                (ball_positions[i].tolist(), ball_positions[i + 1].tolist())
+                for i in range(len(ball_positions) - 1)
+            ]
+            persistent_markers.append(("lines", line_segments))
 
     time.sleep(1.5 * args.slow)
 

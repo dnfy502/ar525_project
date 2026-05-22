@@ -35,6 +35,10 @@ parser.add_argument(
     choices=available_robot_names(),
     help="robot arm profile to use",
 )
+parser.add_argument("--coupled", action="store_true",
+                    help="coupled mode: ball gets arm's actual EE velocity")
+parser.add_argument("--vel_ctrl_steps", type=int, default=10,
+                    help="number of steps with boosted forces before release (coupled mode)")
 args = parser.parse_args()
 profile = get_robot_profile(args.robot)
 
@@ -87,7 +91,7 @@ v_cmd = np.array(
 )
 print(f"robot={profile.name} v_cmd={v_cmd} |v|={np.linalg.norm(v_cmd):.3f} m/s")
 
-arm.attach_ball(ball_id)
+arm.attach_ball(ball_id, coupled=args.coupled)
 coeffs, _, qd_release, v_achieved = arm.plan_throw(v_cmd, RELEASE_POS, t_w=T_W, t_r=T_R, T=T_TOTAL)
 print(
     f"planned speed={np.linalg.norm(v_cmd):.3f} m/s, "
@@ -98,14 +102,23 @@ print(
 released = False
 ball_positions = []
 n_steps = int(T_TOTAL / DT) + 50
+release_step = int(T_R / DT)
 
 for step in range(n_steps):
     t = step * DT
     if not released:
         q_t, qd_t = arm.get_setpoint(coeffs, t)
-        arm.step(q_t, qd_t)
+        if args.coupled and step >= release_step - args.vel_ctrl_steps:
+            arm.step_velocity(q_t, qd_t)
+        else:
+            arm.step(q_t, qd_t)
         if t >= T_R:
-            release_vel = arm.release_ball(ball_id, set_vel=v_cmd)
+            if args.coupled:
+                release_vel = arm.release_ball_coupled(ball_id)
+                print(f"Coupled release: |v_ee|={np.linalg.norm(release_vel):.3f} m/s "
+                      f"(cmd={np.linalg.norm(v_cmd):.3f}, ratio={np.linalg.norm(release_vel)/np.linalg.norm(v_cmd):.3f})")
+            else:
+                release_vel = arm.release_ball(ball_id, set_vel=v_cmd)
             print(f"Released at t={t:.3f}s with |v|={np.linalg.norm(release_vel):.3f} m/s")
             released = True
     else:

@@ -1093,3 +1093,166 @@ We also wanted a fresh compact dataset inside `mc-pilot-pybullet/` without touch
 ### Environment note
 
 Some runs reported a PyBullet import/control-policy issue in this Windows setup, so the study script's existing `auto` backend fallback remains important. The paper-report scripts are designed to summarize whichever backend successfully completed and record that in the raw CSV.
+
+---
+
+## Coupled Arm-Ball Physics (mc-pilot-pybullet/)
+
+### Motivation
+
+The existing PyBullet throwing system is **decoupled**: the arm animates a throw trajectory, but at the release moment the ball's velocity is overridden to the policy's commanded velocity via `p.resetBaseVelocity(ball_id, set_vel=v_cmd)`. The arm's motion is purely cosmetic — the ball receives whatever velocity the policy requests regardless of whether the arm could physically deliver it.
+
+This makes the simulation unrealistic:
+- The throw appears abrupt — the ball suddenly launches at a velocity disconnected from the arm's motion
+- No physical coupling between arm dynamics (joint velocity limits, inertia) and ball trajectory
+- The GP model learns from `v_cmd` data rather than physically achievable velocities
+
+**Goal:** Make the arm **physically propel the ball** so that the release velocity is determined by the arm's actual end-effector (EE) velocity at the release moment, constrained by joint limits, inertia, and the cubic trajectory planner.
+
+### Implementation (2026-05-21)
+
+All changes are **in-place inside `mc-pilot-pybullet/`** with a `coupled=False` flag defaulting to the existing decoupled behaviour. No existing functionality is broken.
+
+#### Files Modified
+
+| File | Changes |
+|------|---------|
+| `robot_arm/arm_controller.py` | Added `attach_ball(coupled=True)` for stiffened constraint (`maxForce=1e6`); `step_velocity(q, qd)` for boosted forces during throw; `release_ball_coupled(ball_id)` reads actual EE velocity and sets it on ball |
+| `simulation_class/model_pybullet.py` | Added `coupled=False` and `vel_ctrl_steps=10` params; coupled mode uses `step_velocity` in final steps, `release_ball_coupled` instead of `release_ball(set_vel=v_cmd)` |
+| `demo_pybullet_gui.py` | Added `--coupled` flag for visual comparison |
+| `standalone_throw.py` | Added `--coupled` flag for quick A/B testing |
+
+#### Files Created
+
+| File | Purpose |
+|------|---------|
+| `calibrate_coupled_arm.py` | Calibration script: sweeps v_cmd from 0.5–3.5 m/s, measures actual EE velocity at release, prints v_cmd → v_actual mapping table |
+| `test_mc_pilot_pb_coupled.py` | Training script with calibrated hyperparameters for coupled mode |
+
+### Technical Details
+
+#### How Coupled Release Works
+
+1. **Stiffened constraint:** `attach_ball(coupled=True)` calls `p.changeConstraint(grip_id, maxForce=1e6)` so the ball tracks the EE tightly during the throw motion
+2. **Boosted forces near release:** `step_velocity(q_t, qd_t)` uses 3× max joint forces in the final `vel_ctrl_steps=10` timesteps before release for tighter trajectory tracking
+3. **Actual EE velocity:** `release_ball_coupled()` reads `ee_state()` velocity BEFORE removing the constraint, then sets the ball to that velocity (not `v_cmd`)
+4. **No resetBaseVelocity override:** The ball gets whatever the arm physically achieved
+
+#### Key difference from decoupled mode
+
+```python
+# Decoupled (existing): ball gets commanded velocity
+arm.release_ball(ball_id, set_vel=v_cmd)   # |v| = v_cmd exactly
+
+# Coupled (new): ball gets actual EE velocity
+arm.release_ball_coupled(ball_id)           # |v| = v_ee ≤ v_cmd
+```
+
+### Calibration Results (kuka_iiwa)
+
+Calibration via `calibrate_coupled_arm.py`:
+
+| v_cmd (m/s) | v_actual (m/s) | Ratio | Range (m) | Joint Clipped |
+|-------------|----------------|-------|-----------|---------------|
+| 0.50 | 0.493 | 98.6% | 0.652 | No |
+| 0.75 | 0.737 | 98.3% | 0.724 | No |
+| 1.00 | 0.892 | 89.2% | 0.770 | Yes (max_util=1.0) |
+| 1.25+ | 0.892 | ≤71.3% | 0.770 | Yes (saturated) |
+
+**Key findings:**
+- Arm saturates at **~0.89 m/s** EE velocity due to joint velocity limits (kuka_iiwa `qd_max`)
+- Below 0.75 m/s: near-perfect tracking (>98%)
+- Above 1.0 m/s: all clipped to the same configuration — arm physically can't go faster
+- Usable target range: **0.50–0.77 m** from release position
+
+### Coupled Training Hyperparameters (calibrated)
+
+| Parameter | Decoupled (PB-A) | Coupled | Rationale |
+|-----------|-------------------|---------|-----------|
+| `uM` | 2.5 m/s | 1.0 m/s | Arm saturates at 0.89 m/s |
+| `lm` | 0.5 m | 0.50 m | Min reachable distance |
+| `lM` | 1.0 m | 0.75 m | Max reachable distance at saturation |
+| `lc` | 0.1 m | 0.3 m | Proportional to smaller target range |
+| `coupled` | False | True | New parameter |
+| `vel_ctrl_steps` | N/A | 10 | Boosted force steps before release |
+
+### How to Run
+
+```bash
+# Calibrate (measure arm capabilities)
+python calibrate_coupled_arm.py
+
+# Quick A/B test
+python standalone_throw.py --direct --speed 0.75 --coupled
+python standalone_throw.py --direct --speed 0.75            # decoupled baseline
+
+# Training
+python test_mc_pilot_pb_coupled.py -seed 1 -num_trials 5 -coupled 1
+
+# Visual demo (requires trained policy)
+python demo_pybullet_gui.py --log_path results_mc_pilot_pb_coupled/1 --coupled
+```
+
+### Impact on Training
+
+The coupled mode introduces a **systematic velocity shortfall** that the GP must learn as part of the dynamics. This is conceptually identical to the `VelocitySlipNoise` experiment (PB-B, α≈0.11) where the policy learned to compensate by outputting `speed ≈ v_target / (1-α)`. In the coupled case, the "slip" emerges from real arm physics rather than being injected — making it more realistic and hardware-transferable.
+
+### Training Results
+
+The model successfully learned to compensate for the arm's physical velocity limits and the non-linear coupling.
+
+```text
+============================================================
+Training complete in 9263.8s (~2.5 hours)
+
+--- Results (coupled mode) ---
+  Throw  1 (  Explore): err=0.224m  target=0.68m  
+  Throw  2 (  Explore): err=0.280m  target=0.72m  
+  Throw  3 (  Explore): err=0.092m  target=0.70m  HIT
+  Throw  4 (  Explore): err=0.149m  target=0.64m  
+  Throw  5 (  Explore): err=0.072m  target=0.69m  HIT
+  Throw  6 (  Trial 1): err=0.011m  target=0.59m  HIT
+  Throw  7 (  Trial 2): err=0.022m  target=0.72m  HIT
+  Throw  8 (  Trial 3): err=0.066m  target=0.67m  HIT
+  Throw  9 (  Trial 4): err=0.090m  target=0.70m  HIT
+  Throw 10 (  Trial 5): err=0.148m  target=0.66m  
+
+Policy throws: 4/5 hits
+Mean error: 0.067m
+Final trial cost: 0.017560
+```
+
+The algorithm successfully achieved a **4/5 hit rate** and **0.067m mean error** despite the severe coupling dynamics. This confirms the MC-PILCO framework's ability to learn complex, constrained physical couplings without needing explicit modeling of the arm dynamics inside the analytical GP gradients.
+
+### GUI Demo Bug Fix: Stale PD Motor Controller State (2026-05-22)
+
+**File:** `demo_pybullet_gui.py`
+
+**Problem:** When running the coupled-mode GUI demo (`--coupled`), throws 2–5 exhibited wild EE velocity oscillations — the actual release velocity was 10–12× the commanded velocity (e.g., `|v_ee|=10.01 m/s` for `|v_cmd|=0.85 m/s`, ratio=11.77). Only the first throw had correct tracking (ratio ≈ 0.93). All 5 throws were misses with errors up to 105 cm.
+
+**Root Cause:** PyBullet's internal PD motor controller retains accumulated state (integral terms, force commands) between calls to `setJointMotorControlArray`. The demo script used `arm.reset()` between throws, which only calls `resetJointState` to zero out joint positions and velocities. However, the PD controller's internal state from the previous throw's `step_velocity()` phase (which uses 3× boosted forces for tight velocity tracking near release) was **not** cleared. On subsequent throws, these residual boosted-force commands caused the arm joints to accelerate violently during the windup/throw phase, producing chaotic EE velocities.
+
+**Diagnosis:** Systematic testing confirmed:
+- **Fresh client per throw:** All ratios 0.92–0.98 ✓ (correct)
+- **Reused client, `arm.reset()` only:** Throw 1 ratio 0.93, throws 2–5 ratios 8.0–13.2 ✗ (broken)
+- **Reused client, `p.resetSimulation()` per throw:** All ratios 0.92–0.98 ✓ (fixed)
+- Body accumulation (old balls in the scene) was ruled out as a contributing factor — the bug persisted even after removing old balls between throws.
+
+**Note:** The training pipeline (`model_pybullet.py`) was NOT affected because it already calls `p.resetSimulation()` at the start of each `_simulate_pybullet()` rollout. The bug was isolated to the GUI demo script.
+
+**Fix:** Replaced the per-throw `arm.reset()` with a full `p.resetSimulation()` + reload cycle. Each throw now:
+1. Calls `p.resetSimulation()` to wipe all PyBullet state (bodies, constraints, motor controllers)
+2. Reloads the ground plane and arm URDF from scratch
+3. Reconstructs all persistent visual markers (target spheres, landing markers, trajectory lines, error text) from a stored list
+
+**Before/After comparison (same seed, 5 throws):**
+
+| Throw | v_cmd ratio (before) | Error (before) | v_cmd ratio (after) | Error (after) |
+|-------|---------------------|----------------|--------------------|--------------| 
+| 1 | 0.929 | 13.8cm MISS | 0.929 | 13.8cm MISS |
+| 2 | **9.666** | 50.6cm MISS | **0.978** | 2.1cm HIT |
+| 3 | **11.767** | 105.4cm MISS | **0.921** | 10.0cm HIT |
+| 4 | **12.301** | 91.3cm MISS | **0.925** | 11.6cm MISS |
+| 5 | 2.535 | 17.4cm MISS | **0.959** | 4.1cm HIT |
+
+Result: 0/5 hits → **3/5 hits**, all velocity tracking ratios now within the expected 0.92–0.98 range.

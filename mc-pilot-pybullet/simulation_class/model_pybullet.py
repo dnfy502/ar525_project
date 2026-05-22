@@ -35,6 +35,8 @@ class PyBulletThrowingSystem:
         t_r=_T_R,
         gui_mode=False,
         robot_name="kuka_iiwa",
+        coupled=False,
+        vel_ctrl_steps=10,
     ):
         self.mass = mass
         self.radius = radius
@@ -46,6 +48,8 @@ class PyBulletThrowingSystem:
         self.t_r = t_r
         self._gui_mode = gui_mode
         self.robot_name = robot_name
+        self.coupled = coupled
+        self.vel_ctrl_steps = vel_ctrl_steps
         self._profile = get_robot_profile(robot_name)
         self._urdf_path = pybullet_data.getDataPath() + "/" + self._profile.urdf_rel_path
         self._plane_urdf = "plane.urdf"
@@ -166,7 +170,7 @@ class PyBulletThrowingSystem:
             physicsClientId=client,
         )
 
-        arm.attach_ball(ball_id)
+        arm.attach_ball(ball_id, coupled=self.coupled)
         profile_t_arm = self._profile.timing[2]
         t_arm = max(_T_ARM, profile_t_arm, T + self.t_r)
         coeffs, _, _, _ = arm.plan_throw(v_cmd, release_pos, self.t_w, self.t_r, t_arm)
@@ -185,11 +189,19 @@ class PyBulletThrowingSystem:
             t = step * dt
             if not released:
                 q_t, qd_t = arm.get_setpoint(coeffs, t)
-                arm.step(q_t, qd_t)
+
+                # --- Coupled mode: boost forces near release for tighter tracking ---
+                if self.coupled and step >= release_step - self.vel_ctrl_steps:
+                    arm.step_velocity(q_t, qd_t)
+                else:
+                    arm.step(q_t, qd_t)
 
                 if step >= release_step:
-                    _, ee_vel, _, _ = arm.ee_state()
-                    if self.arm_noise is not None:
+                    if self.coupled:
+                        # Coupled: ball flies with whatever velocity the arm gave it
+                        actual_release_vel = arm.release_ball_coupled(ball_id)
+                    elif self.arm_noise is not None:
+                        _, ee_vel, _, _ = arm.ee_state()
                         actual_release_vel = self.arm_noise.pybullet_release_vel(v_cmd, ee_vel)
                         arm.release_ball(ball_id, set_vel=None)
                         p.resetBaseVelocity(
